@@ -42,7 +42,7 @@ and the bare command fails with `too many arguments`, which looks exactly like
 
 ## Status
 
-Stage 5 complete: protected apps show a confirmation panel instead of quitting.
+Stage 6 complete: SwiftUI settings window for choosing protected apps.
 
 
 ### Seeding the protected list for testing

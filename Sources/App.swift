@@ -29,11 +29,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
 
     private let confirmationPanel = ConfirmationPanelController()
+    private lazy var settingsWindow = SettingsWindowController(store: protectedApps)
     private var statusItem: StatusItemController?
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItem = StatusItemController(permissions: permissions, protectedApps: protectedApps)
+        statusItem = StatusItemController(
+            permissions: permissions,
+            protectedApps: protectedApps,
+            openSettings: { [weak self] in
+                self?.settingsWindow.show()
+            }
+        )
 
         interceptor.onProtectedQuitAttempt = { [weak self] target in
             MainActor.assumeIsolated {

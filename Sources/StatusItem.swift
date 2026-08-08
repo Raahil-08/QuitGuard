@@ -9,11 +9,17 @@ final class StatusItemController: NSObject {
     private let permissions: PermissionGate
     private let protectedApps: ProtectedAppsStore
     private let menu = NSMenu()
+    private let openSettings: () -> Void
     private var cancellables = Set<AnyCancellable>()
 
-    init(permissions: PermissionGate, protectedApps: ProtectedAppsStore) {
+    init(
+        permissions: PermissionGate,
+        protectedApps: ProtectedAppsStore,
+        openSettings: @escaping () -> Void
+    ) {
         self.permissions = permissions
         self.protectedApps = protectedApps
+        self.openSettings = openSettings
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         super.init()
@@ -80,6 +86,16 @@ final class StatusItemController: NSObject {
 
         menu.addItem(.separator())
 
+        let settings = NSMenuItem(
+            title: "Settings…",
+            action: #selector(showSettings),
+            keyEquivalent: ","
+        )
+        settings.target = self
+        menu.addItem(settings)
+
+        menu.addItem(.separator())
+
         let quit = NSMenuItem(
             title: "Quit QuitGuard",
             action: #selector(NSApplication.terminate(_:)),
@@ -87,6 +103,10 @@ final class StatusItemController: NSObject {
         )
         quit.target = NSApp
         menu.addItem(quit)
+    }
+
+    @objc private func showSettings() {
+        openSettings()
     }
 
     @objc private func grantAccess() {
