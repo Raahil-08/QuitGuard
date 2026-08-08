@@ -40,6 +40,10 @@ final class QuitInterceptor {
     private var tapThread: Thread?
     private var tapRunLoop: CFRunLoop?
 
+    /// Invoked on the main thread when a protected app's Cmd+Q is swallowed.
+    /// Set by `AppDelegate`; the tap itself knows nothing about UI.
+    var onProtectedQuitAttempt: ((FrontmostApp) -> Void)?
+
     init(frontmost: FrontmostAppTracker, protectedApps: ProtectedAppsStore) {
         self.frontmost = frontmost
         self.protectedApps = protectedApps
@@ -204,14 +208,15 @@ final class QuitInterceptor {
             return Unmanaged.passUnretained(event)
         }
 
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
             Self.logger.notice(
                 "Cmd+Q SWALLOWED -> \(target.name, privacy: .public) [\(target.bundleID, privacy: .public)] pid \(target.pid)"
             )
+            self?.onProtectedQuitAttempt?(target)
         }
 
-        // Stage 4: consume the event outright. Stage 5 puts the confirmation
-        // panel here; returning nil is what stops the app from ever seeing it.
+        // Consume the event. The app never sees the keystroke; if the user
+        // confirms, the panel calls NSRunningApplication.terminate() instead.
         return nil
     }
 }

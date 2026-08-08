@@ -28,11 +28,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         protectedApps: protectedApps
     )
 
+    private let confirmationPanel = ConfirmationPanelController()
     private var statusItem: StatusItemController?
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = StatusItemController(permissions: permissions, protectedApps: protectedApps)
+
+        interceptor.onProtectedQuitAttempt = { [weak self] target in
+            MainActor.assumeIsolated {
+                self?.confirmationPanel.present(for: target)
+            }
+        }
 
         // The tap can only be created once we hold the Accessibility grant, so
         // install it now if we do and otherwise wait for the grant to land.

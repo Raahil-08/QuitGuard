@@ -42,8 +42,8 @@ and the bare command fails with `too many arguments`, which looks exactly like
 
 ## Status
 
-Stage 4 complete: protected apps are read from UserDefaults and their Cmd+Q is
-swallowed.
+Stage 5 complete: protected apps show a confirmation panel instead of quitting.
+
 
 ### Seeding the protected list for testing
 
