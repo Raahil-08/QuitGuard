@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import SwiftUI
 
@@ -21,13 +22,17 @@ struct QuitGuardApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let permissions = PermissionGate()
     private let frontmost = FrontmostAppTracker()
-    private lazy var interceptor = QuitInterceptor(frontmost: frontmost)
+    private let protectedApps = ProtectedAppsStore()
+    private lazy var interceptor = QuitInterceptor(
+        frontmost: frontmost,
+        protectedApps: protectedApps
+    )
 
     private var statusItem: StatusItemController?
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItem = StatusItemController(permissions: permissions)
+        statusItem = StatusItemController(permissions: permissions, protectedApps: protectedApps)
 
         // The tap can only be created once we hold the Accessibility grant, so
         // install it now if we do and otherwise wait for the grant to land.
@@ -44,6 +49,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             .store(in: &cancellables)
+
+        // A `defaults write` from a terminal does not notify this process, so
+        // re-read whenever the frontmost app changes. Any Cmd+Q is necessarily
+        // preceded by activating the app it targets, which makes this the hook
+        // that matters — and it costs one cached defaults read per app switch.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.protectedApps.reload()
+        }
 
         if !permissions.refresh() {
             permissions.requestAccess()

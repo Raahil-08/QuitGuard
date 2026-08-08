@@ -42,4 +42,20 @@ and the bare command fails with `too many arguments`, which looks exactly like
 
 ## Status
 
-Stage 3 complete: session event tap installed, observe-only.
+Stage 4 complete: protected apps are read from UserDefaults and their Cmd+Q is
+swallowed.
+
+### Seeding the protected list for testing
+
+```sh
+# set the list (replace the bundle IDs with whatever you want to test)
+defaults write com.raahil.quitguard ProtectedBundleIDs -array com.apple.TextEdit
+
+# inspect / clear
+defaults read com.raahil.quitguard ProtectedBundleIDs
+defaults delete com.raahil.quitguard ProtectedBundleIDs
+```
+
+The running app re-reads the list whenever you switch apps, so a write from a
+terminal takes effect as soon as you activate the app you want to test — no
+relaunch needed.

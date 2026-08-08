@@ -7,10 +7,13 @@ import Combine
 final class StatusItemController: NSObject {
     private let statusItem: NSStatusItem
     private let permissions: PermissionGate
+    private let protectedApps: ProtectedAppsStore
+    private let menu = NSMenu()
     private var cancellables = Set<AnyCancellable>()
 
-    init(permissions: PermissionGate) {
+    init(permissions: PermissionGate, protectedApps: ProtectedAppsStore) {
         self.permissions = permissions
+        self.protectedApps = protectedApps
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         super.init()
@@ -25,13 +28,17 @@ final class StatusItemController: NSObject {
             button.image = image
         }
 
-        rebuildMenu(isTrusted: permissions.isTrusted)
+        // A single menu instance, repopulated by the delegate each time it opens.
+        // Reassigning `statusItem.menu` from `menuWillOpen` would swap the menu
+        // out from under the presentation that is already in flight.
+        menu.delegate = self
+        statusItem.menu = menu
 
         permissions.$isTrusted
             .removeDuplicates()
-            .sink { [weak self] trusted in
+            .sink { [weak self] _ in
                 MainActor.assumeIsolated {
-                    self?.rebuildMenu(isTrusted: trusted)
+                    self?.statusItem.button?.needsDisplay = true
                 }
             }
             .store(in: &cancellables)
@@ -39,10 +46,10 @@ final class StatusItemController: NSObject {
 
     // MARK: - Menu
 
-    private func rebuildMenu(isTrusted: Bool) {
-        let menu = NSMenu()
-        // Re-check on open: the user can revoke the grant while we are running.
-        menu.delegate = self
+    private func populate(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        let isTrusted = permissions.isTrusted
 
         let status = NSMenuItem(
             title: isTrusted ? "Accessibility: Granted" : "Accessibility: Not granted",
@@ -62,6 +69,15 @@ final class StatusItemController: NSObject {
             menu.addItem(grant)
         }
 
+        let count = protectedApps.all.count
+        let protectedItem = NSMenuItem(
+            title: count == 1 ? "1 app protected" : "\(count) apps protected",
+            action: nil,
+            keyEquivalent: ""
+        )
+        protectedItem.isEnabled = false
+        menu.addItem(protectedItem)
+
         menu.addItem(.separator())
 
         let quit = NSMenuItem(
@@ -71,8 +87,6 @@ final class StatusItemController: NSObject {
         )
         quit.target = NSApp
         menu.addItem(quit)
-
-        statusItem.menu = menu
     }
 
     @objc private func grantAccess() {
@@ -86,7 +100,12 @@ final class StatusItemController: NSObject {
 }
 
 extension StatusItemController: NSMenuDelegate {
-    func menuWillOpen(_ menu: NSMenu) {
+    /// Called immediately before the menu is displayed. The correct place to
+    /// refresh state — unlike `menuWillOpen`, it is expected to mutate `menu`.
+    func menuNeedsUpdate(_ menu: NSMenu) {
         permissions.refresh()
+        // Picks up a `defaults write` made from a terminal without a relaunch.
+        protectedApps.reload()
+        populate(menu)
     }
 }

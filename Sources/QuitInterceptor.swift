@@ -17,8 +17,8 @@ private let quitInterceptorCallback: CGEventTapCallBack = { _, type, event, refc
 
 /// Installs the session-wide Cmd+Q event tap.
 ///
-/// **Stage 3 is observe-only.** Matching events are logged and returned
-/// unmodified; nothing is blocked yet.
+/// A matching Cmd+Q is consumed when the frontmost app is in
+/// `ProtectedAppsStore`, and passed through untouched otherwise.
 ///
 /// The tap runs on its own thread rather than the main run loop. If the callback
 /// ran on main, any main-thread stall — SwiftUI layout, enumerating
@@ -33,14 +33,16 @@ final class QuitInterceptor {
     private static let keycodeQ: Int64 = 12
 
     private let frontmost: FrontmostAppTracker
+    private let protectedApps: ProtectedAppsStore
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var tapThread: Thread?
     private var tapRunLoop: CFRunLoop?
 
-    init(frontmost: FrontmostAppTracker) {
+    init(frontmost: FrontmostAppTracker, protectedApps: ProtectedAppsStore) {
         self.frontmost = frontmost
+        self.protectedApps = protectedApps
     }
 
     // MARK: - Lifecycle
@@ -125,7 +127,7 @@ final class QuitInterceptor {
             // Published everything `stop()` needs; safe to let start() return.
             ready.signal()
 
-            Self.logger.notice("Event tap installed and enabled (observe-only)")
+            Self.logger.notice("Event tap installed and enabled")
             CFRunLoopRun()
 
             Self.logger.notice("Event tap run loop exited")
@@ -181,21 +183,35 @@ final class QuitInterceptor {
             return Unmanaged.passUnretained(event)
         }
 
-        // Snapshot now, log later: reading this from the async block would race
-        // the quit we are observing.
-        let target = frontmost.snapshot()
+        // Snapshot now, decide now: reading this from an async block would race
+        // the quit we are reacting to.
+        guard let target = frontmost.snapshot() else {
+            // Fail open. If we cannot say which app this belongs to, we have no
+            // basis to block it, and swallowing a Cmd+Q the user cannot explain
+            // is worse than letting a protected app quit.
+            DispatchQueue.main.async {
+                Self.logger.notice("Cmd+Q passed through: no bundle-identified frontmost app")
+            }
+            return Unmanaged.passUnretained(event)
+        }
+
+        guard protectedApps.contains(target.bundleID) else {
+            DispatchQueue.main.async {
+                Self.logger.notice(
+                    "Cmd+Q passed through -> \(target.name, privacy: .public) [\(target.bundleID, privacy: .public)] (not protected)"
+                )
+            }
+            return Unmanaged.passUnretained(event)
+        }
 
         DispatchQueue.main.async {
-            guard let target else {
-                Self.logger.notice("Cmd+Q observed, but no bundle-identified frontmost app")
-                return
-            }
             Self.logger.notice(
-                "Cmd+Q observed -> \(target.name, privacy: .public) [\(target.bundleID, privacy: .public)] pid \(target.pid)"
+                "Cmd+Q SWALLOWED -> \(target.name, privacy: .public) [\(target.bundleID, privacy: .public)] pid \(target.pid)"
             )
         }
 
-        // Stage 3: observe only. Pass every event through untouched.
-        return Unmanaged.passUnretained(event)
+        // Stage 4: consume the event outright. Stage 5 puts the confirmation
+        // panel here; returning nil is what stops the app from ever seeing it.
+        return nil
     }
 }
