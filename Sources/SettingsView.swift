@@ -53,13 +53,20 @@ final class InstalledAppsScanner: ObservableObject {
         var byBundleID: [String: InstalledApp] = [:]
 
         for root in roots {
+            // No .skipsHiddenFiles: /Applications/Safari.app is a
+            // `restricted,hidden` symlink into the Cryptex volume, so that
+            // option silently drops Safari. Dot-prefixed entries are filtered
+            // explicitly below instead.
             guard let entries = try? fm.contentsOfDirectory(
                 at: root,
                 includingPropertiesForKeys: [.isDirectoryKey],
-                options: [.skipsHiddenFiles]
+                options: []
             ) else { continue }
 
             for entry in entries {
+                if entry.lastPathComponent.hasPrefix(".") {
+                    continue
+                }
                 if entry.pathExtension == "app" {
                     add(entry, to: &byBundleID, fileManager: fm)
                 } else if (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
@@ -68,7 +75,7 @@ final class InstalledAppsScanner: ObservableObject {
                     let nested = (try? fm.contentsOfDirectory(
                         at: entry,
                         includingPropertiesForKeys: nil,
-                        options: [.skipsHiddenFiles]
+                        options: []
                     )) ?? []
                     for child in nested where child.pathExtension == "app" {
                         add(child, to: &byBundleID, fileManager: fm)

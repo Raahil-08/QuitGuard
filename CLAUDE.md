@@ -101,6 +101,9 @@ generated and gitignored. Never hand-edit the `.xcodeproj`.
   passed through rather than swallowed.
 - `UserDefaults.didChangeNotification` fires only for same-process writes, so a
   `defaults write` from a terminal needs the explicit reload hooks.
+- The app scanner must not pass `.skipsHiddenFiles`. `/Applications/Safari.app`
+  is a `restricted,hidden` symlink into the Cryptex volume, and that option
+  silently drops Safari from the picker.
 
 ## Build check
 
