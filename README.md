@@ -28,6 +28,18 @@ grant is pinned to the app's bundle identifier *and* its signing certificate, so
 it survives rebuilds as long as neither changes. See `CLAUDE.md` for the
 constraints that keep it that way.
 
+## Debugging
+
+QuitGuard logs to the unified log under its own subsystem:
+
+```sh
+/usr/bin/log stream --predicate 'subsystem == "com.raahil.quitguard"'
+```
+
+Use the absolute path — `log` is shadowed by a shell function in some profiles,
+and the bare command fails with `too many arguments`, which looks exactly like
+"the app is producing no output".
+
 ## Status
 
-Stage 1 complete: menu bar skeleton, signing configured.
+Stage 3 complete: session event tap installed, observe-only.

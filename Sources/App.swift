@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 /// QuitGuard is a menu bar only agent (LSUIElement).
@@ -19,16 +20,38 @@ struct QuitGuardApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let permissions = PermissionGate()
+    private let frontmost = FrontmostAppTracker()
+    private lazy var interceptor = QuitInterceptor(frontmost: frontmost)
+
     private var statusItem: StatusItemController?
+    private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = StatusItemController(permissions: permissions)
 
-        // Prompt on launch when the grant is missing. Stage 7 replaces this with
-        // a distinction between first-run onboarding and "permission was reset".
+        // The tap can only be created once we hold the Accessibility grant, so
+        // install it now if we do and otherwise wait for the grant to land.
+        permissions.$isTrusted
+            .removeDuplicates()
+            .sink { [weak self] trusted in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if trusted {
+                        self.interceptor.start()
+                    } else {
+                        self.interceptor.stop()
+                    }
+                }
+            }
+            .store(in: &cancellables)
+
         if !permissions.refresh() {
             permissions.requestAccess()
             permissions.startPolling()
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        interceptor.stop()
     }
 }
