@@ -53,7 +53,7 @@ final class PermissionGate: ObservableObject {
     func startPolling() {
         guard pollTimer == nil, !isTrusted else { return }
 
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 if self.refresh() {
@@ -61,6 +61,9 @@ final class PermissionGate: ObservableObject {
                 }
             }
         }
+        // .common so the poll keeps running while a menu is open.
+        RunLoop.main.add(timer, forMode: .common)
+        pollTimer = timer
     }
 
     func stopPolling() {

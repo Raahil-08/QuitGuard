@@ -42,7 +42,8 @@ and the bare command fails with `too many arguments`, which looks exactly like
 
 ## Status
 
-Stage 6 complete: SwiftUI settings window for choosing protected apps.
+All stages complete: menu bar app, event tap, confirmation panel, settings
+picker, login item, and tap health monitoring.
 
 
 ### Seeding the protected list for testing

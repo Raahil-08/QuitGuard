@@ -5,49 +5,71 @@ import Combine
 /// releasing it removes the icon from the menu bar.
 @MainActor
 final class StatusItemController: NSObject {
+
+    /// Whether QuitGuard is actually intercepting anything right now.
+    enum Health {
+        case normal
+        /// Permission missing, or the tap exists but the system has disabled it.
+        case degraded
+    }
+
     private let statusItem: NSStatusItem
     private let permissions: PermissionGate
     private let protectedApps: ProtectedAppsStore
+    private let launchAtLogin: LaunchAtLogin
     private let menu = NSMenu()
     private let openSettings: () -> Void
+
+    private var health: Health = .normal
     private var cancellables = Set<AnyCancellable>()
 
     init(
         permissions: PermissionGate,
         protectedApps: ProtectedAppsStore,
+        launchAtLogin: LaunchAtLogin,
         openSettings: @escaping () -> Void
     ) {
         self.permissions = permissions
         self.protectedApps = protectedApps
+        self.launchAtLogin = launchAtLogin
         self.openSettings = openSettings
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         super.init()
 
-        if let button = statusItem.button {
-            let image = NSImage(
-                systemSymbolName: "shield.lefthalf.filled",
-                accessibilityDescription: "QuitGuard"
-            )
-            // Template images adapt to light/dark menu bars automatically.
-            image?.isTemplate = true
-            button.image = image
-        }
+        applyIcon()
 
         // A single menu instance, repopulated by the delegate each time it opens.
         // Reassigning `statusItem.menu` from `menuWillOpen` would swap the menu
         // out from under the presentation that is already in flight.
         menu.delegate = self
         statusItem.menu = menu
+    }
 
-        permissions.$isTrusted
-            .removeDuplicates()
-            .sink { [weak self] _ in
-                MainActor.assumeIsolated {
-                    self?.statusItem.button?.needsDisplay = true
-                }
-            }
-            .store(in: &cancellables)
+    // MARK: - Health
+
+    func setHealth(_ newHealth: Health) {
+        guard newHealth != health else { return }
+        health = newHealth
+        applyIcon()
+    }
+
+    private func applyIcon() {
+        guard let button = statusItem.button else { return }
+
+        // Filled shield when armed, hollow outline when it is not intercepting.
+        let symbol = (health == .normal) ? "shield.lefthalf.filled" : "shield"
+        let description = (health == .normal)
+            ? "QuitGuard, active"
+            : "QuitGuard, not intercepting"
+
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)
+        // Template images adapt to light/dark menu bars automatically.
+        image?.isTemplate = true
+        button.image = image
+        button.toolTip = (health == .normal)
+            ? "QuitGuard is active"
+            : "QuitGuard is not intercepting Cmd+Q"
     }
 
     // MARK: - Menu
@@ -73,6 +95,14 @@ final class StatusItemController: NSObject {
             )
             grant.target = self
             menu.addItem(grant)
+        } else if health == .degraded {
+            let warning = NSMenuItem(
+                title: "Event tap inactive — retrying",
+                action: nil,
+                keyEquivalent: ""
+            )
+            warning.isEnabled = false
+            menu.addItem(warning)
         }
 
         let count = protectedApps.all.count
@@ -94,6 +124,17 @@ final class StatusItemController: NSObject {
         settings.target = self
         menu.addItem(settings)
 
+        let login = NSMenuItem(
+            title: launchAtLogin.requiresApproval
+                ? "Launch at Login (needs approval)"
+                : "Launch at Login",
+            action: #selector(toggleLaunchAtLogin),
+            keyEquivalent: ""
+        )
+        login.target = self
+        login.state = launchAtLogin.isEnabled ? .on : .off
+        menu.addItem(login)
+
         menu.addItem(.separator())
 
         let quit = NSMenuItem(
@@ -105,8 +146,14 @@ final class StatusItemController: NSObject {
         menu.addItem(quit)
     }
 
+    // MARK: - Actions
+
     @objc private func showSettings() {
         openSettings()
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        launchAtLogin.toggle()
     }
 
     @objc private func grantAccess() {
@@ -126,6 +173,7 @@ extension StatusItemController: NSMenuDelegate {
         permissions.refresh()
         // Picks up a `defaults write` made from a terminal without a relaunch.
         protectedApps.reload()
+        launchAtLogin.refresh()
         populate(menu)
     }
 }
