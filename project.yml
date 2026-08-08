@@ -1,0 +1,60 @@
+name: QuitGuard
+
+options:
+  bundleIdPrefix: com.raahil
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  QuitGuard:
+    type: application
+    platform: macOS
+    deploymentTarget: "13.0"
+
+    sources:
+      - path: Sources
+
+    entitlements:
+      path: Sources/QuitGuard.entitlements
+      properties:
+        # No sandbox. A sandboxed process cannot create a session event tap.
+        com.apple.security.app-sandbox: false
+
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleName: QuitGuard
+        CFBundleDisplayName: QuitGuard
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundlePackageType: APPL
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        # Menu bar only: no Dock icon, no main window.
+        LSUIElement: true
+        NSHumanReadableCopyright: ""
+
+    settings:
+      base:
+        # FROZEN. Changing either of these revokes the Accessibility grant.
+        PRODUCT_BUNDLE_IDENTIFIER: com.raahil.quitguard
+        CODE_SIGN_IDENTITY: "QuitGuard Local"
+
+        PRODUCT_NAME: QuitGuard
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGNING_REQUIRED: YES
+        CODE_SIGNING_ALLOWED: YES
+        # Empty team: this is a local self-signed identity, not a Developer ID.
+        DEVELOPMENT_TEAM: ""
+        ENABLE_HARDENED_RUNTIME: NO
+        COMBINE_HIDPI_IMAGES: YES
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
