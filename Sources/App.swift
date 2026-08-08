@@ -16,10 +16,19 @@ struct QuitGuardApp: App {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let permissions = PermissionGate()
     private var statusItem: StatusItemController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItem = StatusItemController()
+        statusItem = StatusItemController(permissions: permissions)
+
+        // Prompt on launch when the grant is missing. Stage 7 replaces this with
+        // a distinction between first-run onboarding and "permission was reset".
+        if !permissions.refresh() {
+            permissions.requestAccess()
+            permissions.startPolling()
+        }
     }
 }

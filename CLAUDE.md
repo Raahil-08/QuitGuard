@@ -48,6 +48,10 @@ does not work.
 
   Changing either value produces a different requirement and silently revokes
   the grant.
+- Release builds must set `CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO`. Xcode
+  injects `get-task-allow` by default even in Release, which leaves the app
+  debuggable — unacceptable for a process holding Accessibility. It does not
+  affect the designated requirement, so toggling it does not disturb the grant.
 - **Never use ad-hoc signing (`codesign -s -`).** It produces a new identity per
   build and silently breaks the Accessibility grant on every rebuild.
 - If the signing identity is missing, recreate it with `scripts/make-signing-cert.sh`.

@@ -58,3 +58,10 @@ targets:
         ENABLE_HARDENED_RUNTIME: NO
         COMBINE_HIDPI_IMAGES: YES
         ENABLE_USER_SCRIPT_SANDBOXING: NO
+
+      configs:
+        Release:
+          # Strip get-task-allow. Xcode injects it by default, which leaves the
+          # Release build debuggable — unacceptable for a process that holds
+          # Accessibility and can see every keystroke.
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
