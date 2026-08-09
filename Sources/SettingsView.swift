@@ -112,10 +112,19 @@ struct SettingsView: View {
     @ObservedObject var store: ProtectedAppsStore
     @StateObject private var scanner = InstalledAppsScanner()
     @State private var query = ""
+    @State private var showSelectedOnly = false
 
     private var filtered: [InstalledApp] {
-        guard !query.isEmpty else { return scanner.apps }
-        return scanner.apps.filter {
+        // Selected-only is applied before the text query so the two compose:
+        // with the toggle on and text entered you get protected apps matching
+        // the text, not all apps matching the text.
+        var result = scanner.apps
+        if showSelectedOnly {
+            result = result.filter { store.contains($0.bundleID) }
+        }
+
+        guard !query.isEmpty else { return result }
+        return result.filter {
             $0.name.localizedCaseInsensitiveContains(query)
                 || $0.bundleID.localizedCaseInsensitiveContains(query)
         }
@@ -140,8 +149,16 @@ struct SettingsView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
 
-            TextField("Filter by name or bundle identifier", text: $query)
-                .textFieldStyle(.roundedBorder)
+            HStack(spacing: 10) {
+                TextField("Filter by name or bundle identifier", text: $query)
+                    .textFieldStyle(.roundedBorder)
+
+                Toggle("Selected only", isOn: $showSelectedOnly)
+                    .toggleStyle(.checkbox)
+                    // Without this the checkbox is squeezed by the text field,
+                    // which takes all the width it is offered.
+                    .fixedSize()
+            }
         }
         .padding(14)
     }
@@ -155,6 +172,18 @@ struct SettingsView: View {
         }
     }
 
+    /// The selected-only cases are called out separately: falling back to
+    /// "No matches." there reads as though the app is missing from the scan,
+    /// when really the filter is just hiding everything unticked.
+    private var emptyMessage: String {
+        if showSelectedOnly {
+            return store.all.isEmpty
+                ? "No apps are protected yet."
+                : "No protected apps match."
+        }
+        return query.isEmpty ? "No applications found." : "No matches."
+    }
+
     @ViewBuilder
     private var content: some View {
         if scanner.isScanning && scanner.apps.isEmpty {
@@ -166,7 +195,7 @@ struct SettingsView: View {
         } else if filtered.isEmpty {
             VStack {
                 Spacer()
-                Text(query.isEmpty ? "No applications found." : "No matches.")
+                Text(emptyMessage)
                     .foregroundStyle(.secondary)
                 Spacer()
             }
@@ -188,6 +217,11 @@ struct SettingsView: View {
                 .toggleStyle(.checkbox)
             }
             .listStyle(.inset)
+            // Unticking an app while "Selected only" is on removes its row
+            // underneath the pointer. Rows are Identifiable, so a plain
+            // implicit animation gives List a stable identity to fade out
+            // against instead of snapping the remaining rows upward.
+            .animation(.default, value: filtered)
         }
     }
 
@@ -244,11 +278,28 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 // MARK: - Previews
 
 #if DEBUG
+extension InstalledAppsScanner {
+    /// Synchronous scan for previews only. A same-file extension can reach
+    /// `scanDirectories()` despite its `private` modifier.
+    nonisolated static func previewScan() -> [InstalledApp] { scanDirectories() }
+}
+
 struct SettingsView_Previews: PreviewProvider {
     /// Isolated defaults suite so previewing cannot touch real settings.
-    private static let previewStore = ProtectedAppsStore(
-        defaults: UserDefaults(suiteName: "com.raahil.quitguard.preview") ?? .standard
-    )
+    ///
+    /// Seeded with a couple of apps so "Selected only" has something to show —
+    /// the store starts empty, so the filter would otherwise always render the
+    /// empty state. The seeds come from a live scan rather than literal bundle
+    /// identifiers: none are hardcoded anywhere in QuitGuard, and taking them
+    /// from the scanner guarantees they match the rows the picker lists.
+    private static let previewStore: ProtectedAppsStore = {
+        let defaults = UserDefaults(suiteName: "com.raahil.quitguard.preview") ?? .standard
+        let store = ProtectedAppsStore(defaults: defaults)
+        for app in InstalledAppsScanner.previewScan().prefix(2) {
+            store.setProtected(true, for: app.bundleID)
+        }
+        return store
+    }()
 
     static var previews: some View {
         SettingsView(store: previewStore)
