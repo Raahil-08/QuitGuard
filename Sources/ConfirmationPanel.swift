@@ -217,11 +217,35 @@ final class ConfirmationPanelController: NSObject {
 
         let size = panel.frame.size
         // Slightly above centre reads better than dead centre for a dialog.
-        let origin = NSPoint(
+        let desired = NSPoint(
             x: visible.midX - size.width / 2,
             y: visible.midY - size.height / 2 + visible.height * 0.08
         )
+
+        // The 0.08 nudge is unconditional, so on a short display — or if the
+        // panel ever grows taller — it can push the title bar up under the menu
+        // bar. Clamp to visibleFrame. If the panel is somehow larger than the
+        // visible area, min() wins first and it pins to the bottom-left corner
+        // instead of landing off screen entirely.
+        let origin = NSPoint(
+            x: max(visible.minX, min(desired.x, visible.maxX - size.width)),
+            y: max(visible.minY, min(desired.y, visible.maxY - size.height))
+        )
         panel.setFrameOrigin(origin)
+
+        // Logged so a placement bug is diagnosable from the log alone. The
+        // frame/visibleFrame delta is what reveals menu bar and Dock insets,
+        // which is where full-screen and multi-display cases go wrong.
+        let full = screen?.frame ?? .zero
+        let placement = String(
+            format: "origin (%.0f, %.0f) size %.0fx%.0f frame (%.0f, %.0f, %.0f, %.0f) "
+                + "visibleFrame (%.0f, %.0f, %.0f, %.0f)",
+            origin.x, origin.y, size.width, size.height,
+            full.minX, full.minY, full.width, full.height,
+            visible.minX, visible.minY, visible.width, visible.height
+        )
+        let clamped = (origin == desired) ? "no" : "yes"
+        Self.logger.notice("Panel placed: \(placement, privacy: .public) clamped=\(clamped, privacy: .public)")
     }
 }
 
