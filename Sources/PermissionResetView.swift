@@ -111,3 +111,19 @@ final class PermissionResetWindowController: NSObject {
         cancellables.removeAll()
     }
 }
+
+// MARK: - Previews
+
+#if DEBUG
+// PreviewProvider rather than the #Preview macro: that macro requires macOS 14
+// and this target deploys to 13.
+struct PermissionResetView_Previews: PreviewProvider {
+    static var previews: some View {
+        PermissionResetView(protectedCount: 3, onOpenSystemSettings: {})
+            .previewDisplayName("Several apps saved")
+
+        PermissionResetView(protectedCount: 1, onOpenSystemSettings: {})
+            .previewDisplayName("One app saved")
+    }
+}
+#endif

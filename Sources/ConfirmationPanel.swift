@@ -1,11 +1,13 @@
 import AppKit
+import SwiftUI
 import os
 
 /// A panel that can take keyboard focus without activating QuitGuard.
 ///
 /// `.nonactivatingPanel` keeps the panel from stealing activation from the app
 /// the user is quitting, but an NSPanel does not become key on its own — and
-/// without key status the Escape and Return key equivalents never fire.
+/// without key status neither SwiftUI's `.defaultAction`/`.cancelAction`
+/// shortcuts nor AppKit's Escape handling reach the responder chain.
 final class ConfirmationPanel: NSPanel {
     /// Invoked when Escape is pressed anywhere in the panel.
     var onCancel: (() -> Void)?
@@ -16,11 +18,78 @@ final class ConfirmationPanel: NSPanel {
     ///
     /// This deliberately does not call `performClose`: the style mask has no
     /// `.closable`, so there is no close button and `performClose` would just
-    /// beep.
+    /// beep. It also backs up SwiftUI's `.cancelAction` — whichever handles the
+    /// key first wins, and `cancel()` is idempotent.
     override func cancelOperation(_ sender: Any?) {
         onCancel?()
     }
 }
+
+// MARK: - Contents
+
+/// Drives the panel's contents. Held for the app's lifetime so the panel and its
+/// hosting view can be built once and reused; only these values change per Cmd+Q.
+@MainActor
+final class ConfirmationModel: ObservableObject {
+    @Published var appName: String = ""
+    @Published var icon: NSImage?
+}
+
+struct ConfirmationContentView: View {
+    @ObservedObject var model: ConfirmationModel
+    let onCancel: () -> Void
+    let onConfirm: () -> Void
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 14) {
+            HStack(alignment: .top, spacing: 16) {
+                iconView
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Quit \(model.appName)?")
+                        .font(.system(size: 14, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    Text("\(model.appName) is in your protected apps list.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 10) {
+                Button("Cancel", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                Button("Quit", action: onConfirm)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 24)
+        .padding(.bottom, 18)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var iconView: some View {
+        Group {
+            if let icon = model.icon {
+                Image(nsImage: icon)
+                    .resizable()
+            } else {
+                Image(systemName: "app.dashed")
+                    .resizable()
+                    .scaledToFit()
+            }
+        }
+        .frame(width: 56, height: 56)
+    }
+}
+
+// MARK: - Controller
 
 /// Presents the "quit this protected app?" confirmation.
 @MainActor
@@ -28,25 +97,38 @@ final class ConfirmationPanelController: NSObject {
 
     private static let logger = Logger(subsystem: "com.raahil.quitguard", category: "panel")
 
+    private let model = ConfirmationModel()
     private var panel: ConfirmationPanel?
     private var targetPID: pid_t?
 
     // MARK: - Presentation
 
-    func present(for target: FrontmostApp) {
-        // A second Cmd+Q while the panel is up should surface the existing panel
-        // rather than stack another one.
-        if let panel, targetPID == target.pid {
-            position(panel)
-            panel.makeKeyAndOrderFront(nil)
-            return
-        }
+    /// Builds the panel and its hosting view once, ahead of any Cmd+Q.
+    ///
+    /// Called from `applicationDidFinishLaunching`. The first layout of an
+    /// NSHostingView costs several milliseconds; this window has to be on screen
+    /// the instant the user presses Cmd+Q, so that cost is paid at launch and
+    /// the instance is reused for every subsequent confirmation.
+    func prepare() {
+        guard panel == nil else { return }
 
-        dismiss()
-
-        let runningApp = NSRunningApplication(processIdentifier: target.pid)
-        let panel = makePanel(for: target, icon: runningApp?.icon)
+        let panel = makePanel()
         self.panel = panel
+
+        // Force the first layout pass now, off the Cmd+Q path.
+        panel.contentView?.layoutSubtreeIfNeeded()
+
+        Self.logger.notice("Confirmation panel prebuilt")
+    }
+
+    func present(for target: FrontmostApp) {
+        // No-op when already built; guards against a Cmd+Q arriving before
+        // prepare() for any reason.
+        prepare()
+        guard let panel else { return }
+
+        model.appName = target.name
+        model.icon = NSRunningApplication(processIdentifier: target.pid)?.icon
         targetPID = target.pid
 
         position(panel)
@@ -57,13 +139,13 @@ final class ConfirmationPanelController: NSObject {
 
     func dismiss() {
         panel?.orderOut(nil)
-        panel = nil
         targetPID = nil
+        // The panel instance is deliberately retained for reuse.
     }
 
     // MARK: - Actions
 
-    @objc private func confirmQuit() {
+    @objc func confirmQuit() {
         guard let pid = targetPID else {
             dismiss()
             return
@@ -82,14 +164,14 @@ final class ConfirmationPanelController: NSObject {
         Self.logger.notice("terminate() for pid \(pid) requested=\(requested)")
     }
 
-    @objc private func cancel() {
+    @objc func cancel() {
         Self.logger.notice("Confirmation cancelled")
         dismiss()
     }
 
     // MARK: - Construction
 
-    private func makePanel(for target: FrontmostApp, icon: NSImage?) -> ConfirmationPanel {
+    private func makePanel() -> ConfirmationPanel {
         let panel = ConfirmationPanel(
             contentRect: NSRect(x: 0, y: 0, width: 380, height: 148),
             styleMask: [.titled, .nonactivatingPanel],
@@ -108,7 +190,13 @@ final class ConfirmationPanelController: NSObject {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.becomesKeyOnlyIfNeeded = false
-        panel.contentView = makeContentView(for: target, icon: icon)
+        panel.contentView = NSHostingView(
+            rootView: ConfirmationContentView(
+                model: model,
+                onCancel: { [weak self] in self?.cancel() },
+                onConfirm: { [weak self] in self?.confirmQuit() }
+            )
+        )
         panel.onCancel = { [weak self] in
             MainActor.assumeIsolated {
                 self?.cancel()
@@ -116,65 +204,6 @@ final class ConfirmationPanelController: NSObject {
         }
 
         return panel
-    }
-
-    private func makeContentView(for target: FrontmostApp, icon: NSImage?) -> NSView {
-        let container = NSView()
-
-        let iconView = NSImageView()
-        iconView.image = icon ?? NSImage(systemSymbolName: "app.dashed", accessibilityDescription: nil)
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-
-        let title = NSTextField(labelWithString: "Quit \(target.name)?")
-        title.font = .systemFont(ofSize: 14, weight: .semibold)
-        title.lineBreakMode = .byTruncatingTail
-
-        let subtitle = NSTextField(labelWithString: "\(target.name) is in your protected apps list.")
-        subtitle.font = .systemFont(ofSize: 12)
-        subtitle.textColor = .secondaryLabelColor
-        subtitle.lineBreakMode = .byWordWrapping
-        subtitle.maximumNumberOfLines = 2
-
-        let textStack = NSStackView(views: [title, subtitle])
-        textStack.orientation = .vertical
-        textStack.alignment = .leading
-        textStack.spacing = 3
-        textStack.translatesAutoresizingMaskIntoConstraints = false
-
-        let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancel))
-        cancelButton.bezelStyle = .rounded
-        cancelButton.keyEquivalent = "\u{1b}"          // Escape
-
-        let quitButton = NSButton(title: "Quit", target: self, action: #selector(confirmQuit))
-        quitButton.bezelStyle = .rounded
-        quitButton.keyEquivalent = "\r"                 // Return — the default button
-
-        let buttonStack = NSStackView(views: [cancelButton, quitButton])
-        buttonStack.orientation = .horizontal
-        buttonStack.spacing = 10
-        buttonStack.translatesAutoresizingMaskIntoConstraints = false
-
-        container.addSubview(iconView)
-        container.addSubview(textStack)
-        container.addSubview(buttonStack)
-
-        NSLayoutConstraint.activate([
-            iconView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
-            iconView.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
-            iconView.widthAnchor.constraint(equalToConstant: 56),
-            iconView.heightAnchor.constraint(equalToConstant: 56),
-
-            textStack.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 16),
-            textStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
-            textStack.topAnchor.constraint(equalTo: container.topAnchor, constant: 28),
-
-            buttonStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
-            buttonStack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -18),
-            buttonStack.topAnchor.constraint(greaterThanOrEqualTo: textStack.bottomAnchor, constant: 16),
-        ])
-
-        return container
     }
 
     /// Centres the panel on the screen containing the mouse, not the screen that
@@ -195,3 +224,22 @@ final class ConfirmationPanelController: NSObject {
         panel.setFrameOrigin(origin)
     }
 }
+
+// MARK: - Previews
+
+#if DEBUG
+struct ConfirmationContentView_Previews: PreviewProvider {
+    private static var sampleModel: ConfirmationModel {
+        let m = ConfirmationModel()
+        m.appName = "Safari"
+        m.icon = NSWorkspace.shared.icon(forFile: "/Applications/Safari.app")
+        return m
+    }
+
+    static var previews: some View {
+        ConfirmationContentView(model: sampleModel, onCancel: {}, onConfirm: {})
+            .frame(width: 380, height: 148)
+            .previewDisplayName("Confirmation")
+    }
+}
+#endif

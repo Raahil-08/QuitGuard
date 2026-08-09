@@ -240,3 +240,19 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.makeKeyAndOrderFront(nil)
     }
 }
+
+// MARK: - Previews
+
+#if DEBUG
+struct SettingsView_Previews: PreviewProvider {
+    /// Isolated defaults suite so previewing cannot touch real settings.
+    private static let previewStore = ProtectedAppsStore(
+        defaults: UserDefaults(suiteName: "com.raahil.quitguard.preview") ?? .standard
+    )
+
+    static var previews: some View {
+        SettingsView(store: previewStore)
+            .previewDisplayName("App picker")
+    }
+}
+#endif

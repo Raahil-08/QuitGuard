@@ -92,6 +92,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.protectedApps.reload()
         }
 
+        // Pay the panel's first-layout cost now, not on the Cmd+Q path.
+        confirmationPanel.prepare()
+
         presentLaunchStateIfNeeded()
         startHealthMonitoring()
     }
