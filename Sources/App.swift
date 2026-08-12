@@ -33,11 +33,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let launchAtLogin = LaunchAtLogin()
     private let dockBounds = DockBoundsTracker()
     private let dockQuit = DockQuitSettings()
+    private let dockTiles = DockTileResolver()
     private lazy var interceptor = QuitInterceptor(
         frontmost: frontmost,
         protectedApps: protectedApps,
         dockBounds: dockBounds,
-        dockQuit: dockQuit
+        dockQuit: dockQuit,
+        dockTiles: dockTiles
     )
 
     private let confirmationPanel = ConfirmationPanelController()
@@ -67,7 +69,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         interceptor.onProtectedQuitAttempt = { [weak self] target in
             MainActor.assumeIsolated {
-                self?.confirmationPanel.present(for: target)
+                self?.confirmationPanel.present(for: target, prompt: .protectedApp)
+            }
+        }
+
+        // Same panel instance and the same terminate() path as Cmd+Q; only the
+        // wording differs, because this one reaches apps that are not in the
+        // protected list.
+        interceptor.onDockQuitAttempt = { [weak self] target in
+            MainActor.assumeIsolated {
+                self?.confirmationPanel.present(for: target, prompt: .dockChord)
             }
         }
 
@@ -101,8 +112,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.protectedApps.reload()
-            self?.dockQuit.reload()
+            // Delivered on .main by the queue argument above, but the closure
+            // is Sendable, so the isolation has to be stated to reach the
+            // main-actor properties.
+            MainActor.assumeIsolated {
+                self?.protectedApps.reload()
+                self?.dockQuit.reload()
+            }
         }
 
         // Pay the panel's first-layout cost now, not on the Cmd+Q path.

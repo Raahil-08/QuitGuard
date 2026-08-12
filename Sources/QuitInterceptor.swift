@@ -36,6 +36,7 @@ final class QuitInterceptor {
     private let protectedApps: ProtectedAppsStore
     private let dockBounds: DockBoundsTracker
     private let dockQuit: DockQuitSettings
+    private let dockTiles: DockTileResolver
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -46,16 +47,22 @@ final class QuitInterceptor {
     /// Set by `AppDelegate`; the tap itself knows nothing about UI.
     var onProtectedQuitAttempt: ((FrontmostApp) -> Void)?
 
+    /// Invoked on the main thread when a Cmd + right-click resolved to a
+    /// running app. Not called when the chord hit nothing quittable.
+    var onDockQuitAttempt: ((FrontmostApp) -> Void)?
+
     init(
         frontmost: FrontmostAppTracker,
         protectedApps: ProtectedAppsStore,
         dockBounds: DockBoundsTracker,
-        dockQuit: DockQuitSettings
+        dockQuit: DockQuitSettings,
+        dockTiles: DockTileResolver
     ) {
         self.frontmost = frontmost
         self.protectedApps = protectedApps
         self.dockBounds = dockBounds
         self.dockQuit = dockQuit
+        self.dockTiles = dockTiles
     }
 
     // MARK: - Lifecycle
@@ -243,7 +250,8 @@ final class QuitInterceptor {
     /// synchronous IPC into the Dock with no bounded worst case, so all this
     /// does is test a cached rect. Tile resolution happens on the main queue.
     ///
-    /// STAGE 1a: swallow and log only. No resolution, no panel, no quit.
+    /// The decision to swallow is made here from modifiers and a cached rect
+    /// alone; identifying *which* app was clicked happens on the main queue.
     private func handleDockRightClick(_ event: CGEvent) -> Unmanaged<CGEvent>? {
         // First line of the function on purpose: with the feature off this
         // branch is a no-op you can verify by reading one guard, and nothing
@@ -283,11 +291,32 @@ final class QuitInterceptor {
             return Unmanaged.passUnretained(event)
         }
 
-        DispatchQueue.main.async {
+        // Swallowed already — the return below is what suppresses the Dock's
+        // context menu, and it has to happen now. Everything from here on is
+        // best-effort: if the point turns out not to be an app tile, the click
+        // is simply gone. That is the deliberate trade for a callback that
+        // cannot afford to ask the Dock anything.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+
+            let resolution = self.dockTiles.resolve(at: location)
             let where_ = String(format: "(%.0f, %.0f)", location.x, location.y)
-            Self.logger.notice(
-                "Cmd+right-click SWALLOWED at \(where_, privacy: .public) — inside Dock bounds [stage 1a: no action]"
-            )
+
+            switch resolution {
+            case .app(let target):
+                Self.logger.notice(
+                    "Cmd+right-click SWALLOWED at \(where_, privacy: .public) -> \(resolution.logDescription, privacy: .public)"
+                )
+                self.onDockQuitAttempt?(target)
+
+            default:
+                // Nothing to quit. No panel and no beep: the user pointed at
+                // something that is not a running app, and a dialog about it
+                // would be noise.
+                Self.logger.notice(
+                    "Cmd+right-click SWALLOWED at \(where_, privacy: .public), no action — \(resolution.logDescription, privacy: .public)"
+                )
+            }
         }
 
         return nil

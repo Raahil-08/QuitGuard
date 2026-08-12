@@ -33,6 +33,29 @@ final class ConfirmationPanel: NSPanel {
 final class ConfirmationModel: ObservableObject {
     @Published var appName: String = ""
     @Published var icon: NSImage?
+    /// Why the panel is asking. Varies by trigger — the Dock path reaches apps
+    /// that are not in the protected list, so the Cmd+Q wording would be a lie.
+    @Published var detail: String = ""
+}
+
+/// What triggered a confirmation. Only affects the panel's wording.
+enum QuitPrompt {
+    /// Cmd+Q on an app in the protected list.
+    case protectedApp
+    /// Cmd + right-click on the app's Dock tile.
+    case dockChord
+
+    func detail(for appName: String) -> String {
+        switch self {
+        case .protectedApp:
+            return "\(appName) is in your protected apps list."
+        case .dockChord:
+            // Says which app and why it is being asked about. This path
+            // usually targets something in the background, so "the app you
+            // are looking at" is not a safe assumption for the reader.
+            return "You Cmd + right-clicked its icon in the Dock."
+        }
+    }
 }
 
 struct ConfirmationContentView: View {
@@ -51,7 +74,7 @@ struct ConfirmationContentView: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
 
-                    Text("\(model.appName) is in your protected apps list.")
+                    Text(model.detail)
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -121,20 +144,23 @@ final class ConfirmationPanelController: NSObject {
         Self.logger.notice("Confirmation panel prebuilt")
     }
 
-    func present(for target: FrontmostApp) {
+    func present(for target: FrontmostApp, prompt: QuitPrompt = .protectedApp) {
         // No-op when already built; guards against a Cmd+Q arriving before
         // prepare() for any reason.
         prepare()
         guard let panel else { return }
 
         model.appName = target.name
+        model.detail = prompt.detail(for: target.name)
         model.icon = NSRunningApplication(processIdentifier: target.pid)?.icon
         targetPID = target.pid
 
         position(panel)
         panel.makeKeyAndOrderFront(nil)
 
-        Self.logger.notice("Confirmation shown for \(target.name, privacy: .public)")
+        Self.logger.notice(
+            "Confirmation shown for \(target.name, privacy: .public) via \(String(describing: prompt), privacy: .public)"
+        )
     }
 
     func dismiss() {
@@ -253,17 +279,22 @@ final class ConfirmationPanelController: NSObject {
 
 #if DEBUG
 struct ConfirmationContentView_Previews: PreviewProvider {
-    private static var sampleModel: ConfirmationModel {
+    private static func sampleModel(_ prompt: QuitPrompt) -> ConfirmationModel {
         let m = ConfirmationModel()
         m.appName = "Safari"
+        m.detail = prompt.detail(for: m.appName)
         m.icon = NSWorkspace.shared.icon(forFile: "/Applications/Safari.app")
         return m
     }
 
     static var previews: some View {
-        ConfirmationContentView(model: sampleModel, onCancel: {}, onConfirm: {})
+        ConfirmationContentView(model: sampleModel(.protectedApp), onCancel: {}, onConfirm: {})
             .frame(width: 380, height: 148)
-            .previewDisplayName("Confirmation")
+            .previewDisplayName("Cmd+Q, protected app")
+
+        ConfirmationContentView(model: sampleModel(.dockChord), onCancel: {}, onConfirm: {})
+            .frame(width: 380, height: 148)
+            .previewDisplayName("Cmd + right-click in the Dock")
     }
 }
 #endif
