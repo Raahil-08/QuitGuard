@@ -158,7 +158,7 @@ struct SettingsView: View {
 
             // Worth stating plainly. Everything else in this window is scoped
             // to the ticked apps, so the natural assumption is that this is too.
-            Text("Applies to any app in the Dock, not just the ones ticked above. Finder is never quit this way.")
+            Text("Applies to any app in the Dock, not just the ones ticked above. The app quits immediately — no confirmation. Finder is never quit this way.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
