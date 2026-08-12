@@ -117,12 +117,59 @@ final class InstalledAppsScanner: ObservableObject {
     }
 }
 
+// MARK: - Tabs
+
+/// The window's two panes.
+///
+/// Rendered by an `NSToolbar` in `.preference` style rather than by SwiftUI's
+/// `TabView`. macOS backs `TabView` with an `NSTabView`, whose tab items are
+/// text only — an SF Symbol passed via `.tabItem { Label(...) }` is silently
+/// discarded, and no `tabViewStyle` or `labelStyle` changes that. The
+/// icon-above-label pill is a toolbar, not a tab bar.
+enum SettingsTab: String, CaseIterable {
+    case settings
+    case about
+
+    var title: String {
+        switch self {
+        case .settings: return "Settings"
+        case .about: return "About"
+        }
+    }
+
+    /// Filled, because an outline glyph reads thin next to `info.circle` at
+    /// toolbar size.
+    var systemImage: String {
+        switch self {
+        case .settings: return "gearshape.fill"
+        case .about: return "info.circle"
+        }
+    }
+
+    var itemIdentifier: NSToolbarItem.Identifier {
+        NSToolbarItem.Identifier("com.raahil.quitguard.tab.\(rawValue)")
+    }
+
+    init?(itemIdentifier: NSToolbarItem.Identifier) {
+        guard let match = Self.allCases.first(where: { $0.itemIdentifier == itemIdentifier })
+        else { return nil }
+        self = match
+    }
+}
+
+/// Shared between the AppKit toolbar and the SwiftUI content, which is what
+/// lets a toolbar click swap the pane.
+final class SettingsTabSelection: ObservableObject {
+    @Published var current: SettingsTab = .settings
+}
+
 // MARK: - View
 
 struct SettingsView: View {
     @ObservedObject var store: ProtectedAppsStore
     @ObservedObject var dockQuit: DockQuitSettings
     @ObservedObject var launchAtLogin: LaunchAtLogin
+    @ObservedObject var tabs: SettingsTabSelection
     @StateObject private var scanner = InstalledAppsScanner()
     @State private var query = ""
     @State private var showSelectedOnly = false
@@ -144,17 +191,16 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        TabView {
-            settingsTab
-                .tabItem { Label("Settings", systemImage: "gearshape") }
-            AboutView()
-                .tabItem { Label("About", systemImage: "info.circle") }
+        Group {
+            switch tabs.current {
+            case .settings: settingsTab
+            case .about: AboutView()
+            }
         }
         .frame(minWidth: 500, minHeight: 580)
-        // On the TabView rather than on the tab's own content: this fires once
-        // when the window opens, not again each time the user comes back to
-        // this tab. `scan()` is idempotent as well, so neither alone is load
-        // bearing.
+        // Outside the switch, so it fires when the window opens rather than
+        // each time a pane is swapped in. `scan()` is idempotent as well, so
+        // neither alone is load bearing.
         .onAppear { scanner.scan() }
     }
 
@@ -402,11 +448,15 @@ struct AboutView: View {
 /// undocumented and was renamed between macOS 12 and 13. An NSWindow built here
 /// is fully supported API and behaves the same on every version.
 @MainActor
-final class SettingsWindowController: NSObject, NSWindowDelegate {
+final class SettingsWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private var window: NSWindow?
     private let store: ProtectedAppsStore
     private let dockQuit: DockQuitSettings
     private let launchAtLogin: LaunchAtLogin
+
+    /// Owned here rather than by the view: the toolbar is AppKit and outlives
+    /// any particular SwiftUI body.
+    private let tabs = SettingsTabSelection()
 
     init(
         store: ProtectedAppsStore,
@@ -434,7 +484,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             rootView: SettingsView(
                 store: store,
                 dockQuit: dockQuit,
-                launchAtLogin: launchAtLogin
+                launchAtLogin: launchAtLogin,
+                tabs: tabs
             )
         )
         let window = NSWindow(contentViewController: hosting)
@@ -445,10 +496,65 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.delegate = self
         window.center()
 
+        // .preference is what produces the System Settings appearance: items
+        // centred under the title, SF Symbol above the label, and a pill behind
+        // the selected one. It is a plain NSWindow property, so none of this
+        // costs the menu bar open path.
+        let toolbar = NSToolbar(identifier: "com.raahil.quitguard.settings")
+        toolbar.delegate = self
+        toolbar.displayMode = .iconAndLabel
+        toolbar.allowsUserCustomization = false
+        toolbar.selectedItemIdentifier = tabs.current.itemIdentifier
+        window.toolbar = toolbar
+        window.toolbarStyle = .preference
+
         self.window = window
 
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    // MARK: - NSToolbarDelegate
+
+    private var tabIdentifiers: [NSToolbarItem.Identifier] {
+        SettingsTab.allCases.map(\.itemIdentifier)
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        tabIdentifiers
+    }
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        tabIdentifiers
+    }
+
+    /// Without this the items are buttons rather than a selector, and no pill
+    /// is ever drawn.
+    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        tabIdentifiers
+    }
+
+    func toolbar(
+        _ toolbar: NSToolbar,
+        itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
+        willBeInsertedIntoToolbar flag: Bool
+    ) -> NSToolbarItem? {
+        guard let tab = SettingsTab(itemIdentifier: itemIdentifier) else { return nil }
+        let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+        item.label = tab.title
+        item.paletteLabel = tab.title
+        item.image = NSImage(
+            systemSymbolName: tab.systemImage,
+            accessibilityDescription: tab.title
+        )
+        item.target = self
+        item.action = #selector(selectTab(_:))
+        return item
+    }
+
+    @objc private func selectTab(_ sender: NSToolbarItem) {
+        guard let tab = SettingsTab(itemIdentifier: sender.itemIdentifier) else { return }
+        tabs.current = tab
     }
 }
 
@@ -497,14 +603,16 @@ struct SettingsView_Previews: PreviewProvider {
         SettingsView(
             store: previewStore,
             dockQuit: dockQuit(enabled: false, suite: "com.raahil.quitguard.preview.dockoff"),
-            launchAtLogin: previewLaunchAtLogin
+            launchAtLogin: previewLaunchAtLogin,
+            tabs: SettingsTabSelection()
         )
         .previewDisplayName("Dock quit off")
 
         SettingsView(
             store: previewStore,
             dockQuit: dockQuit(enabled: true, suite: "com.raahil.quitguard.preview.dockon"),
-            launchAtLogin: previewLaunchAtLogin
+            launchAtLogin: previewLaunchAtLogin,
+            tabs: SettingsTabSelection()
         )
         .previewDisplayName("Dock quit on")
     }
