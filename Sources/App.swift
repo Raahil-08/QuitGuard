@@ -31,9 +31,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let frontmost = FrontmostAppTracker()
     private let protectedApps = ProtectedAppsStore()
     private let launchAtLogin = LaunchAtLogin()
+    private let dockBounds = DockBoundsTracker()
     private lazy var interceptor = QuitInterceptor(
         frontmost: frontmost,
-        protectedApps: protectedApps
+        protectedApps: protectedApps,
+        dockBounds: dockBounds
     )
 
     private let confirmationPanel = ConfirmationPanelController()
@@ -72,6 +74,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     guard let self else { return }
                     if trusted {
                         self.interceptor.start()
+                        // The tracker is built before the grant exists, so its
+                        // first measurement fails and leaves the bounds nil.
+                        // Measure again now that AX calls will actually work.
+                        self.dockBounds.refresh()
                     } else {
                         self.interceptor.stop()
                     }

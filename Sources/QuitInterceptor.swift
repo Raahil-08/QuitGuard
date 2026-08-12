@@ -34,6 +34,7 @@ final class QuitInterceptor {
 
     private let frontmost: FrontmostAppTracker
     private let protectedApps: ProtectedAppsStore
+    private let dockBounds: DockBoundsTracker
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -44,9 +45,14 @@ final class QuitInterceptor {
     /// Set by `AppDelegate`; the tap itself knows nothing about UI.
     var onProtectedQuitAttempt: ((FrontmostApp) -> Void)?
 
-    init(frontmost: FrontmostAppTracker, protectedApps: ProtectedAppsStore) {
+    init(
+        frontmost: FrontmostAppTracker,
+        protectedApps: ProtectedAppsStore,
+        dockBounds: DockBoundsTracker
+    ) {
         self.frontmost = frontmost
         self.protectedApps = protectedApps
+        self.dockBounds = dockBounds
     }
 
     // MARK: - Lifecycle
@@ -64,6 +70,7 @@ final class QuitInterceptor {
         guard eventTap == nil else { return true }
 
         let eventMask = (1 as CGEventMask) << CGEventType.keyDown.rawValue
+            | (1 as CGEventMask) << CGEventType.rightMouseDown.rawValue
 
         // .cgSessionEventTap  — session-wide, sees events for every app.
         // .headInsertEventTap — ahead of other taps, so we decide first.
@@ -165,6 +172,12 @@ final class QuitInterceptor {
             return nil
         }
 
+        // Handled before the keyDown guard so the Cmd+Q path below is reached by
+        // exactly the same events it was reached by before.
+        if type == .rightMouseDown {
+            return handleDockRightClick(event)
+        }
+
         guard type == .keyDown else {
             return Unmanaged.passUnretained(event)
         }
@@ -217,6 +230,55 @@ final class QuitInterceptor {
 
         // Consume the event. The app never sees the keystroke; if the user
         // confirms, the panel calls NSRunningApplication.terminate() instead.
+        return nil
+    }
+
+    // MARK: - Dock right-click
+
+    /// Runs on the tap thread, under the same microsecond budget as the Cmd+Q
+    /// path. Deliberately does no AX work: resolving which tile was hit is
+    /// synchronous IPC into the Dock with no bounded worst case, so all this
+    /// does is test a cached rect. Tile resolution happens on the main queue.
+    ///
+    /// STAGE 1a: swallow and log only. No resolution, no panel, no quit.
+    private func handleDockRightClick(_ event: CGEvent) -> Unmanaged<CGEvent>? {
+        let flags = event.flags
+        guard flags.contains(.maskCommand) else {
+            return Unmanaged.passUnretained(event)
+        }
+
+        // Same strictness as Cmd+Q: any additional modifier means this chord is
+        // not ours. Cmd+Ctrl+click and Cmd+Shift+click belong to other things.
+        guard !flags.contains(.maskAlternate),
+              !flags.contains(.maskControl),
+              !flags.contains(.maskShift) else {
+            return Unmanaged.passUnretained(event)
+        }
+
+        let location = event.location
+        guard dockBounds.contains(location) else {
+            // Outside the Dock, or the bounds are unknown. Either way this is
+            // an ordinary Cmd+right-click and belongs to whatever is under it.
+            let cached = dockBounds.current
+            DispatchQueue.main.async {
+                let where_ = String(format: "(%.0f, %.0f)", location.x, location.y)
+                let rect = cached.map {
+                    String(format: "(%.0f, %.0f) %.0fx%.0f", $0.minX, $0.minY, $0.width, $0.height)
+                } ?? "unknown"
+                Self.logger.notice(
+                    "Cmd+right-click passed through at \(where_, privacy: .public) — outside Dock bounds \(rect, privacy: .public)"
+                )
+            }
+            return Unmanaged.passUnretained(event)
+        }
+
+        DispatchQueue.main.async {
+            let where_ = String(format: "(%.0f, %.0f)", location.x, location.y)
+            Self.logger.notice(
+                "Cmd+right-click SWALLOWED at \(where_, privacy: .public) — inside Dock bounds [stage 1a: no action]"
+            )
+        }
+
         return nil
     }
 }
