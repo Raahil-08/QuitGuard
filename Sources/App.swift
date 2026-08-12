@@ -45,7 +45,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let confirmationPanel = ConfirmationPanelController()
     private lazy var settingsWindow = SettingsWindowController(
         store: protectedApps,
-        dockQuit: dockQuit
+        dockQuit: dockQuit,
+        launchAtLogin: launchAtLogin
     )
     private lazy var permissionResetWindow = PermissionResetWindowController(
         permissions: permissions,

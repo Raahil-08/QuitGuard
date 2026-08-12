@@ -24,8 +24,19 @@ final class InstalledAppsScanner: ObservableObject {
     @Published private(set) var apps: [InstalledApp] = []
     @Published private(set) var isScanning = false
 
+    /// Scanning happens once per app launch.
+    ///
+    /// Previously guaranteed by the window being retained, so `onAppear` fired
+    /// only once. A TabView can create and destroy tab content as the user
+    /// switches, so the guarantee now lives here instead of depending on
+    /// SwiftUI's view lifecycle. Re-enumerating /Applications on every tab
+    /// switch would be pure waste — the list does not change while the window
+    /// is open.
+    private var hasScanned = false
+
     func scan() {
-        guard !isScanning else { return }
+        guard !hasScanned, !isScanning else { return }
+        hasScanned = true
         isScanning = true
 
         Task.detached(priority: .userInitiated) {
@@ -111,6 +122,7 @@ final class InstalledAppsScanner: ObservableObject {
 struct SettingsView: View {
     @ObservedObject var store: ProtectedAppsStore
     @ObservedObject var dockQuit: DockQuitSettings
+    @ObservedObject var launchAtLogin: LaunchAtLogin
     @StateObject private var scanner = InstalledAppsScanner()
     @State private var query = ""
     @State private var showSelectedOnly = false
@@ -132,46 +144,111 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            content
-            Divider()
-            footer
+        TabView {
+            settingsTab
+                .tabItem { Label("Settings", systemImage: "gearshape") }
+            AboutView()
+                .tabItem { Label("About", systemImage: "info.circle") }
         }
-        .frame(minWidth: 440, minHeight: 460)
+        .frame(minWidth: 500, minHeight: 580)
+        // On the TabView rather than on the tab's own content: this fires once
+        // when the window opens, not again each time the user comes back to
+        // this tab. `scan()` is idempotent as well, so neither alone is load
+        // bearing.
         .onAppear { scanner.scan() }
     }
 
-    /// Below the list, not in the header: this is a global behaviour switch,
-    /// not another control over which rows are shown.
-    private var footer: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Toggle(
-                "Quit apps with Cmd + right-click in the Dock",
-                isOn: Binding(
-                    get: { dockQuit.isEnabled },
-                    set: { dockQuit.setEnabled($0) }
-                )
-            )
-            .toggleStyle(.checkbox)
-
-            // Worth stating plainly. Everything else in this window is scoped
-            // to the ticked apps, so the natural assumption is that this is too.
-            Text("Applies to any app in the Dock, not just the ones ticked above. The app quits immediately — no confirmation. Finder is never quit this way.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+    /// Deliberately not `Form`/`Section`. Two things break there: the grouped
+    /// form style promotes a TextField's placeholder to a wrapped label in the
+    /// leading column, wrecking the filter row, and the app List expands to its
+    /// full content height inside the Form's own scroll view — which pushes the
+    /// Behaviour section below 136 rows of apps. A plain VStack keeps the List
+    /// as the only scrolling region, which is what this window wants.
+    private var settingsTab: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionLabel("Protected apps")
+            header
+            content
+            Divider()
+            sectionLabel("Behaviour")
+            behaviour
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
     }
 
+    private func sectionLabel(_ title: String) -> some View {
+        Text(title)
+            .font(.headline)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 6)
+    }
+
+    /// Switches, not checkboxes: these are settings that take effect on their
+    /// own. The app rows above stay checkboxes because they are a selection.
+    private var behaviour: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                switchRow(
+                    "Quit apps with Cmd + right-click in the Dock",
+                    isOn: Binding(
+                        get: { dockQuit.isEnabled },
+                        set: { dockQuit.setEnabled($0) }
+                    )
+                )
+
+                // Worth stating plainly. Everything else in this window is
+                // scoped to the ticked apps, so the natural assumption is that
+                // this is too.
+                Text("Applies to any app in the Dock, not just the ones ticked above. The app quits immediately — no confirmation. Finder is never quit this way.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // Reads and writes the same LaunchAtLogin instance the status menu
+            // holds, so toggling either moves the other with no cached copy in
+            // between. See the note on LaunchAtLogin itself.
+            switchRow(
+                "Launch QuitGuard at login",
+                isOn: Binding(
+                    get: { launchAtLogin.isEnabled },
+                    set: { launchAtLogin.setEnabled($0) }
+                )
+            )
+
+            if launchAtLogin.requiresApproval {
+                Text("Waiting for approval in System Settings › General › Login Items.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Label left, switch hard right — so switches line up with each other
+    /// instead of each starting wherever its own label happens to end.
+    ///
+    /// The Toggle keeps its title and hides it rather than being given an empty
+    /// one: `labelsHidden()` suppresses the drawing, but the string is still
+    /// there for VoiceOver.
+    private func switchRow(_ title: String, isOn: Binding<Bool>) -> some View {
+        HStack(spacing: 12) {
+            Text(title)
+            Spacer(minLength: 8)
+            Toggle(title, isOn: isOn)
+                .toggleStyle(.switch)
+                .labelsHidden()
+        }
+    }
+
+    /// The section label says "Protected apps"; this says what being in it
+    /// does, which the label alone does not.
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Ask before quitting these apps")
-                .font(.headline)
-
             Text(protectedSummary)
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -187,7 +264,9 @@ struct SettingsView: View {
                     .fixedSize()
             }
         }
-        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 10)
     }
 
     private var protectedSummary: String {
@@ -260,6 +339,60 @@ struct SettingsView: View {
     }
 }
 
+// MARK: - About
+
+/// Placeholder. Name, version and one line of context.
+struct AboutView: View {
+
+    /// Read from the bundle, never hardcoded — a literal here would drift from
+    /// MARKETING_VERSION the first time it changed.
+    private var version: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String
+        let build = info?["CFBundleVersion"] as? String
+        switch (short, build) {
+        case let (short?, build?): return "Version \(short) (\(build))"
+        case let (short?, nil): return "Version \(short)"
+        default: return "Version unknown"
+        }
+    }
+
+    private var appName: String {
+        let info = Bundle.main.infoDictionary
+        return (info?["CFBundleDisplayName"] as? String)
+            ?? (info?["CFBundleName"] as? String)
+            ?? "QuitGuard"
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Spacer()
+
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .frame(width: 64, height: 64)
+
+            Text(appName)
+                .font(.title2.weight(.semibold))
+
+            Text(version)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            Text("A personal tool. Built for one machine, not for the App Store.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(24)
+    }
+}
+
 // MARK: - Window
 
 /// Hosts `SettingsView` in a plain NSWindow.
@@ -273,14 +406,23 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private let store: ProtectedAppsStore
     private let dockQuit: DockQuitSettings
+    private let launchAtLogin: LaunchAtLogin
 
-    init(store: ProtectedAppsStore, dockQuit: DockQuitSettings) {
+    init(
+        store: ProtectedAppsStore,
+        dockQuit: DockQuitSettings,
+        launchAtLogin: LaunchAtLogin
+    ) {
         self.store = store
         self.dockQuit = dockQuit
+        self.launchAtLogin = launchAtLogin
     }
 
     func show() {
         if let window {
+            // Reopening shows whatever SMAppService says now — the user may
+            // have changed it in System Settings while this window was closed.
+            launchAtLogin.refresh()
             // An accessory app must activate to give a normal window focus.
             // Unlike the confirmation panel, stealing focus is correct here.
             NSApp.activate(ignoringOtherApps: true)
@@ -289,12 +431,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         }
 
         let hosting = NSHostingController(
-            rootView: SettingsView(store: store, dockQuit: dockQuit)
+            rootView: SettingsView(
+                store: store,
+                dockQuit: dockQuit,
+                launchAtLogin: launchAtLogin
+            )
         )
         let window = NSWindow(contentViewController: hosting)
         window.title = "QuitGuard"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.setContentSize(NSSize(width: 460, height: 520))
+        window.setContentSize(NSSize(width: 520, height: 620))
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()
@@ -342,18 +488,33 @@ struct SettingsView_Previews: PreviewProvider {
         return settings
     }
 
+    /// The real thing. Previewing reads SMAppService for this app bundle, which
+    /// under the canvas is Xcode's preview host — so the switch shows whatever
+    /// that reports and must not be trusted as QuitGuard's own login state.
+    private static let previewLaunchAtLogin = LaunchAtLogin()
+
     static var previews: some View {
         SettingsView(
             store: previewStore,
-            dockQuit: dockQuit(enabled: false, suite: "com.raahil.quitguard.preview.dockoff")
+            dockQuit: dockQuit(enabled: false, suite: "com.raahil.quitguard.preview.dockoff"),
+            launchAtLogin: previewLaunchAtLogin
         )
         .previewDisplayName("Dock quit off")
 
         SettingsView(
             store: previewStore,
-            dockQuit: dockQuit(enabled: true, suite: "com.raahil.quitguard.preview.dockon")
+            dockQuit: dockQuit(enabled: true, suite: "com.raahil.quitguard.preview.dockon"),
+            launchAtLogin: previewLaunchAtLogin
         )
         .previewDisplayName("Dock quit on")
+    }
+}
+
+struct AboutView_Previews: PreviewProvider {
+    static var previews: some View {
+        AboutView()
+            .frame(width: 520, height: 580)
+            .previewDisplayName("About")
     }
 }
 #endif
