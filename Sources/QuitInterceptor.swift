@@ -47,10 +47,6 @@ final class QuitInterceptor {
     /// Set by `AppDelegate`; the tap itself knows nothing about UI.
     var onProtectedQuitAttempt: ((FrontmostApp) -> Void)?
 
-    /// Invoked on the main thread when a Cmd + right-click resolved to a
-    /// running app. Not called when the chord hit nothing quittable.
-    var onDockQuitAttempt: ((FrontmostApp) -> Void)?
-
     init(
         frontmost: FrontmostAppTracker,
         protectedApps: ProtectedAppsStore,
@@ -296,6 +292,9 @@ final class QuitInterceptor {
         // best-effort: if the point turns out not to be an app tile, the click
         // is simply gone. That is the deliberate trade for a callback that
         // cannot afford to ask the Dock anything.
+        //
+        // This path does not confirm. Unlike Cmd+Q, the chord is deliberate
+        // enough on its own, so a resolved app is terminated outright.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
 
@@ -307,7 +306,7 @@ final class QuitInterceptor {
                 Self.logger.notice(
                     "Cmd+right-click SWALLOWED at \(where_, privacy: .public) -> \(resolution.logDescription, privacy: .public)"
                 )
-                self.onDockQuitAttempt?(target)
+                self.terminate(target)
 
             default:
                 // Nothing to quit. No panel and no beep: the user pointed at
@@ -320,5 +319,20 @@ final class QuitInterceptor {
         }
 
         return nil
+    }
+
+    /// Quits a resolved app with no confirmation. Main queue only.
+    ///
+    /// `terminate()` sends the standard quit Apple Event, exactly as the
+    /// confirmation panel does, so an app with unsaved work still puts up its
+    /// own save dialog. That is the only thing standing between this chord and
+    /// data loss — do not replace it with anything more forceful.
+    private func terminate(_ target: FrontmostApp) {
+        guard let app = NSRunningApplication(processIdentifier: target.pid) else {
+            Self.logger.notice("pid \(target.pid) is no longer running")
+            return
+        }
+        let requested = app.terminate()
+        Self.logger.notice("terminate() for pid \(target.pid) requested=\(requested)")
     }
 }

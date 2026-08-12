@@ -37,8 +37,13 @@ does not work.
 
 ## Dock right-click quit
 
-Cmd + right-click on a Dock tile quits that app through the same confirmation
-panel. Off by default.
+Cmd + right-click on a Dock tile quits that app **immediately, with no
+confirmation**. Off by default. Applies to every app, protected or not — the
+protected list has no effect on this path.
+
+The only thing between this chord and data loss is that `terminate()` sends the
+standard quit Apple Event, so an app with unsaved work still shows its own save
+dialog. Do not replace it with anything more forceful.
 
 - **Never call AX from the tap callback.** `AXUIElementCopyElementAtPosition`
   is synchronous IPC into the Dock: 13µs median, but with no bounded worst
@@ -60,7 +65,7 @@ panel. Off by default.
   "AXApplicationDockItem"` **and** `AXIsApplicationRunning == true`. The role
   check is not redundant: the strip's left and right edges hit-test to the
   `AXList` itself.
-- A swallowed click that resolves to nothing does nothing — no panel, no beep.
+- A swallowed click that resolves to nothing does nothing — no quit, no beep.
   It is logged, because a chord that silently does nothing is otherwise
   undiagnosable.
 

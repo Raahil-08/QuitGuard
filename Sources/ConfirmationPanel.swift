@@ -39,21 +39,17 @@ final class ConfirmationModel: ObservableObject {
 }
 
 /// What triggered a confirmation. Only affects the panel's wording.
+///
+/// One case, because Cmd+Q is the only path that confirms — the Dock chord
+/// terminates outright and never reaches this panel.
 enum QuitPrompt {
     /// Cmd+Q on an app in the protected list.
     case protectedApp
-    /// Cmd + right-click on the app's Dock tile.
-    case dockChord
 
     func detail(for appName: String) -> String {
         switch self {
         case .protectedApp:
             return "\(appName) is in your protected apps list."
-        case .dockChord:
-            // Says which app and why it is being asked about. This path
-            // usually targets something in the background, so "the app you
-            // are looking at" is not a safe assumption for the reader.
-            return "You Cmd + right-clicked its icon in the Dock."
         }
     }
 }
@@ -291,10 +287,6 @@ struct ConfirmationContentView_Previews: PreviewProvider {
         ConfirmationContentView(model: sampleModel(.protectedApp), onCancel: {}, onConfirm: {})
             .frame(width: 380, height: 148)
             .previewDisplayName("Cmd+Q, protected app")
-
-        ConfirmationContentView(model: sampleModel(.dockChord), onCancel: {}, onConfirm: {})
-            .frame(width: 380, height: 148)
-            .previewDisplayName("Cmd + right-click in the Dock")
     }
 }
 #endif

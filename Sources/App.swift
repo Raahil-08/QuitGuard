@@ -73,14 +73,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Same panel instance and the same terminate() path as Cmd+Q; only the
-        // wording differs, because this one reaches apps that are not in the
-        // protected list.
-        interceptor.onDockQuitAttempt = { [weak self] target in
-            MainActor.assumeIsolated {
-                self?.confirmationPanel.present(for: target, prompt: .dockChord)
-            }
-        }
+        // The Dock chord has no callback: it does not confirm, so the
+        // interceptor terminates the resolved app itself. Only the Cmd+Q path
+        // needs UI.
 
         // The tap can only be created once we hold the Accessibility grant, so
         // install it now if we do and otherwise wait for the grant to land.
