@@ -35,6 +35,7 @@ final class QuitInterceptor {
     private let frontmost: FrontmostAppTracker
     private let protectedApps: ProtectedAppsStore
     private let dockBounds: DockBoundsTracker
+    private let dockQuit: DockQuitSettings
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -48,11 +49,13 @@ final class QuitInterceptor {
     init(
         frontmost: FrontmostAppTracker,
         protectedApps: ProtectedAppsStore,
-        dockBounds: DockBoundsTracker
+        dockBounds: DockBoundsTracker,
+        dockQuit: DockQuitSettings
     ) {
         self.frontmost = frontmost
         self.protectedApps = protectedApps
         self.dockBounds = dockBounds
+        self.dockQuit = dockQuit
     }
 
     // MARK: - Lifecycle
@@ -242,6 +245,14 @@ final class QuitInterceptor {
     ///
     /// STAGE 1a: swallow and log only. No resolution, no panel, no quit.
     private func handleDockRightClick(_ event: CGEvent) -> Unmanaged<CGEvent>? {
+        // First line of the function on purpose: with the feature off this
+        // branch is a no-op you can verify by reading one guard, and nothing
+        // can be swallowed. The lock read costs ~40ns and right-clicks arrive
+        // at human rates, so there is nothing to win by ordering it later.
+        guard dockQuit.isEnabled else {
+            return Unmanaged.passUnretained(event)
+        }
+
         let flags = event.flags
         guard flags.contains(.maskCommand) else {
             return Unmanaged.passUnretained(event)

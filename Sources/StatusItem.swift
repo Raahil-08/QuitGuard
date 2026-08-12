@@ -16,6 +16,7 @@ final class StatusItemController: NSObject {
     private let statusItem: NSStatusItem
     private let permissions: PermissionGate
     private let protectedApps: ProtectedAppsStore
+    private let dockQuit: DockQuitSettings
     private let launchAtLogin: LaunchAtLogin
     private let menu = NSMenu()
     private let openSettings: () -> Void
@@ -26,11 +27,13 @@ final class StatusItemController: NSObject {
     init(
         permissions: PermissionGate,
         protectedApps: ProtectedAppsStore,
+        dockQuit: DockQuitSettings,
         launchAtLogin: LaunchAtLogin,
         openSettings: @escaping () -> Void
     ) {
         self.permissions = permissions
         self.protectedApps = protectedApps
+        self.dockQuit = dockQuit
         self.launchAtLogin = launchAtLogin
         self.openSettings = openSettings
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -173,6 +176,7 @@ extension StatusItemController: NSMenuDelegate {
         permissions.refresh()
         // Picks up a `defaults write` made from a terminal without a relaunch.
         protectedApps.reload()
+        dockQuit.reload()
         launchAtLogin.refresh()
         populate(menu)
     }

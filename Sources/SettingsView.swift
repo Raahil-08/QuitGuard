@@ -110,6 +110,7 @@ final class InstalledAppsScanner: ObservableObject {
 
 struct SettingsView: View {
     @ObservedObject var store: ProtectedAppsStore
+    @ObservedObject var dockQuit: DockQuitSettings
     @StateObject private var scanner = InstalledAppsScanner()
     @State private var query = ""
     @State private var showSelectedOnly = false
@@ -135,9 +136,35 @@ struct SettingsView: View {
             header
             Divider()
             content
+            Divider()
+            footer
         }
         .frame(minWidth: 440, minHeight: 460)
         .onAppear { scanner.scan() }
+    }
+
+    /// Below the list, not in the header: this is a global behaviour switch,
+    /// not another control over which rows are shown.
+    private var footer: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle(
+                "Quit apps with Cmd + right-click in the Dock",
+                isOn: Binding(
+                    get: { dockQuit.isEnabled },
+                    set: { dockQuit.setEnabled($0) }
+                )
+            )
+            .toggleStyle(.checkbox)
+
+            // Worth stating plainly. Everything else in this window is scoped
+            // to the ticked apps, so the natural assumption is that this is too.
+            Text("Applies to any app in the Dock, not just the ones ticked above. Finder is never quit this way.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
     }
 
     private var header: some View {
@@ -245,9 +272,11 @@ struct SettingsView: View {
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private let store: ProtectedAppsStore
+    private let dockQuit: DockQuitSettings
 
-    init(store: ProtectedAppsStore) {
+    init(store: ProtectedAppsStore, dockQuit: DockQuitSettings) {
         self.store = store
+        self.dockQuit = dockQuit
     }
 
     func show() {
@@ -259,7 +288,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             return
         }
 
-        let hosting = NSHostingController(rootView: SettingsView(store: store))
+        let hosting = NSHostingController(
+            rootView: SettingsView(store: store, dockQuit: dockQuit)
+        )
         let window = NSWindow(contentViewController: hosting)
         window.title = "QuitGuard"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
@@ -301,9 +332,28 @@ struct SettingsView_Previews: PreviewProvider {
         return store
     }()
 
+    /// Each state gets its own defaults suite. Sharing one would make the two
+    /// previews fight over the same key, and whichever rendered second would
+    /// win — so the "off" preview would silently start showing "on".
+    private static func dockQuit(enabled: Bool, suite: String) -> DockQuitSettings {
+        let defaults = UserDefaults(suiteName: suite) ?? .standard
+        let settings = DockQuitSettings(defaults: defaults)
+        settings.setEnabled(enabled)
+        return settings
+    }
+
     static var previews: some View {
-        SettingsView(store: previewStore)
-            .previewDisplayName("App picker")
+        SettingsView(
+            store: previewStore,
+            dockQuit: dockQuit(enabled: false, suite: "com.raahil.quitguard.preview.dockoff")
+        )
+        .previewDisplayName("Dock quit off")
+
+        SettingsView(
+            store: previewStore,
+            dockQuit: dockQuit(enabled: true, suite: "com.raahil.quitguard.preview.dockon")
+        )
+        .previewDisplayName("Dock quit on")
     }
 }
 #endif

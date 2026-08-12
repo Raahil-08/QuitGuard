@@ -32,14 +32,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let protectedApps = ProtectedAppsStore()
     private let launchAtLogin = LaunchAtLogin()
     private let dockBounds = DockBoundsTracker()
+    private let dockQuit = DockQuitSettings()
     private lazy var interceptor = QuitInterceptor(
         frontmost: frontmost,
         protectedApps: protectedApps,
-        dockBounds: dockBounds
+        dockBounds: dockBounds,
+        dockQuit: dockQuit
     )
 
     private let confirmationPanel = ConfirmationPanelController()
-    private lazy var settingsWindow = SettingsWindowController(store: protectedApps)
+    private lazy var settingsWindow = SettingsWindowController(
+        store: protectedApps,
+        dockQuit: dockQuit
+    )
     private lazy var permissionResetWindow = PermissionResetWindowController(
         permissions: permissions,
         protectedApps: protectedApps
@@ -53,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = StatusItemController(
             permissions: permissions,
             protectedApps: protectedApps,
+            dockQuit: dockQuit,
             launchAtLogin: launchAtLogin,
             openSettings: { [weak self] in
                 self?.settingsWindow.show()
@@ -96,6 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             queue: .main
         ) { [weak self] _ in
             self?.protectedApps.reload()
+            self?.dockQuit.reload()
         }
 
         // Pay the panel's first-layout cost now, not on the Cmd+Q path.
