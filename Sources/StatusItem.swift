@@ -7,10 +7,58 @@ import Combine
 final class StatusItemController: NSObject {
 
     /// Whether QuitGuard is actually intercepting anything right now.
-    enum Health {
+    enum Health: CaseIterable {
         case normal
         /// Permission missing, or the tap exists but the system has disabled it.
         case degraded
+    }
+
+    /// Everything the menu bar shows for a given state.
+    ///
+    /// Pulled out of `applyIcon` as a pure function so all four combinations can
+    /// be asserted without a real `NSStatusItem`. It was previously computed
+    /// inline, which is how an inverted bolt shipped past a green harness.
+    struct Appearance: Equatable {
+        let symbol: String
+        let toolTip: String
+        let accessibilityDescription: String
+        /// The extra menu row, or nil when there is nothing to say.
+        let sleepMenuRow: String?
+    }
+
+    /// `nonisolated`: it reads no state at all, only its arguments.
+    nonisolated static func appearance(health: Health, sleepDisabled: Bool) -> Appearance {
+        // Two independent axes, deliberately kept in one glyph rather than a
+        // second status item. Fill still means "armed" exactly as before; the
+        // bolt is added when sleep is disabled.
+        //
+        // The bolt is not decoration: force-quitting or crashing skips the
+        // revert, so a disabled `SleepDisabled` can outlive the app that set
+        // it. This is the only thing that shows a relaunched QuitGuard is
+        // holding the machine awake without opening Settings.
+        let armed = (health == .normal)
+
+        let symbol: String
+        switch (armed, sleepDisabled) {
+        case (true, false): symbol = "shield.lefthalf.filled"
+        case (false, false): symbol = "shield"
+        case (true, true): symbol = "bolt.shield.fill"
+        case (false, true): symbol = "bolt.shield"
+        }
+
+        let armedText = armed ? "QuitGuard is active" : "QuitGuard is not intercepting Cmd+Q"
+        let description = armed ? "QuitGuard, active" : "QuitGuard, not intercepting"
+
+        return Appearance(
+            symbol: symbol,
+            toolTip: sleepDisabled
+                ? "\(armedText) — sleep is disabled, this Mac will not sleep with the lid shut"
+                : armedText,
+            accessibilityDescription: sleepDisabled ? "\(description), sleep disabled" : description,
+            // Same shape as the degraded warning: a disabled row naming a state
+            // the user cannot otherwise see.
+            sleepMenuRow: sleepDisabled ? "Sleep disabled — stays awake with the lid shut" : nil
+        )
     }
 
     private let statusItem: NSStatusItem
@@ -48,10 +96,16 @@ final class StatusItemController: NSObject {
         // Sleep can be disabled while no menu is open — a revert that failed at
         // quit, or another process changing it — so the icon follows the
         // published state rather than only being refreshed when the menu opens.
+        //
+        // The emitted value is used rather than re-reading `isEnabled`:
+        // `@Published` fires from `willSet`, so the property still holds the
+        // *previous* value while this runs. Re-reading it leaves the icon one
+        // update behind, which for a two-state value looks exactly like an
+        // inverted indicator.
         stayAwake.$isEnabled
             .removeDuplicates()
-            .sink { [weak self] _ in
-                MainActor.assumeIsolated { self?.applyIcon() }
+            .sink { [weak self] isEnabled in
+                MainActor.assumeIsolated { self?.applyIcon(sleepDisabled: isEnabled) }
             }
             .store(in: &cancellables)
 
@@ -70,41 +124,24 @@ final class StatusItemController: NSObject {
         applyIcon()
     }
 
-    private func applyIcon() {
+    /// `sleepDisabled` is passed in by the publisher, which knows the new value
+    /// before the property does. Everywhere else the settled property is right.
+    private func applyIcon(sleepDisabled: Bool? = nil) {
         guard let button = statusItem.button else { return }
 
-        // Two independent axes, deliberately kept in one glyph rather than a
-        // second status item. Fill still means "armed" exactly as before; the
-        // bolt is added when sleep is disabled.
-        //
-        // The bolt is not decoration: force-quitting or crashing skips the
-        // revert, so a disabled `SleepDisabled` can outlive the app that set
-        // it. This is the only thing that shows a relaunched QuitGuard is
-        // holding the machine awake without opening Settings.
-        let awake = stayAwake.isEnabled
-        let armed = (health == .normal)
-
-        let symbol: String
-        switch (armed, awake) {
-        case (true, false): symbol = "shield.lefthalf.filled"
-        case (false, false): symbol = "shield"
-        case (true, true): symbol = "bolt.shield.fill"
-        case (false, true): symbol = "bolt.shield"
-        }
-
-        let armedText = armed ? "QuitGuard is active" : "QuitGuard is not intercepting Cmd+Q"
-        let description = armed ? "QuitGuard, active" : "QuitGuard, not intercepting"
+        let look = Self.appearance(
+            health: health,
+            sleepDisabled: sleepDisabled ?? stayAwake.isEnabled
+        )
 
         let image = NSImage(
-            systemSymbolName: symbol,
-            accessibilityDescription: awake ? "\(description), sleep disabled" : description
+            systemSymbolName: look.symbol,
+            accessibilityDescription: look.accessibilityDescription
         )
         // Template images adapt to light/dark menu bars automatically.
         image?.isTemplate = true
         button.image = image
-        button.toolTip = awake
-            ? "\(armedText) — sleep is disabled, this Mac will not sleep with the lid shut"
-            : armedText
+        button.toolTip = look.toolTip
     }
 
     // MARK: - Menu
@@ -140,14 +177,10 @@ final class StatusItemController: NSObject {
             menu.addItem(warning)
         }
 
-        if stayAwake.isEnabled {
-            // Same shape as the degraded warning above: a disabled row naming a
-            // state the user cannot otherwise see.
-            let awake = NSMenuItem(
-                title: "Sleep disabled — stays awake with the lid shut",
-                action: nil,
-                keyEquivalent: ""
-            )
+        // Menus are populated on open, by which point the published value has
+        // settled — so the property is the right source here.
+        if let row = Self.appearance(health: health, sleepDisabled: stayAwake.isEnabled).sleepMenuRow {
+            let awake = NSMenuItem(title: row, action: nil, keyEquivalent: "")
             awake.isEnabled = false
             menu.addItem(awake)
         }
