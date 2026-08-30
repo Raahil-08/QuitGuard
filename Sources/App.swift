@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let frontmost = FrontmostAppTracker()
     private let protectedApps = ProtectedAppsStore()
     private let launchAtLogin = LaunchAtLogin()
+    private let stayAwake = StayAwake()
     private let dockBounds = DockBoundsTracker()
     private let dockQuit = DockQuitSettings()
     private let dockTiles = DockTileResolver()
@@ -46,7 +47,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var settingsWindow = SettingsWindowController(
         store: protectedApps,
         dockQuit: dockQuit,
-        launchAtLogin: launchAtLogin
+        launchAtLogin: launchAtLogin,
+        stayAwake: stayAwake
     )
     private lazy var permissionResetWindow = PermissionResetWindowController(
         permissions: permissions,
@@ -63,6 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             protectedApps: protectedApps,
             dockQuit: dockQuit,
             launchAtLogin: launchAtLogin,
+            stayAwake: stayAwake,
             openSettings: { [weak self] in
                 self?.settingsWindow.show()
             }
@@ -122,6 +125,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         presentLaunchStateIfNeeded()
         startHealthMonitoring()
+    }
+
+    /// Sleep must not outlive the app that disabled it. A MacBook that will not
+    /// sleep with the lid shut, and no longer has any UI saying so, is a
+    /// thermal hazard in a bag.
+    ///
+    /// `.terminateLater` is only taken when there is something to undo, so an
+    /// ordinary quit is unchanged and never prompts.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard stayAwake.needsRevertOnQuit else { return .terminateNow }
+
+        stayAwake.revertOnQuit { reverted in
+            if !reverted { Self.presentRevertFailureAlert() }
+            // Quit either way. Refusing to close over a dismissed password
+            // prompt would trap the user in an app they asked to quit, and the
+            // alert has already told them how to undo it by hand.
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
+    private static func presentRevertFailureAlert() {
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = "Sleep is still disabled"
+        alert.informativeText = """
+            QuitGuard could not turn system sleep back on, so this Mac will not \
+            sleep when the lid is closed. A closed MacBook with no external \
+            cooling can run hot.
+
+            To undo it yourself, run:
+            \(StayAwake.recoveryCommand)
+            """
+        alert.addButton(withTitle: "Quit Anyway")
+        // An accessory app has to activate for a modal alert to come forward.
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

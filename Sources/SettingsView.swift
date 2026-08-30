@@ -169,6 +169,7 @@ struct SettingsView: View {
     @ObservedObject var store: ProtectedAppsStore
     @ObservedObject var dockQuit: DockQuitSettings
     @ObservedObject var launchAtLogin: LaunchAtLogin
+    @ObservedObject var stayAwake: StayAwake
     @ObservedObject var tabs: SettingsTabSelection
     @StateObject private var scanner = InstalledAppsScanner()
     @State private var query = ""
@@ -267,6 +268,25 @@ struct SettingsView: View {
 
             if launchAtLogin.requiresApproval {
                 Text("Waiting for approval in System Settings › General › Login Items.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                switchRow(
+                    "Claude maxxing",
+                    isOn: Binding(
+                        get: { stayAwake.isEnabled },
+                        set: { stayAwake.setEnabled($0) }
+                    )
+                )
+                // Disabled while the password prompt is up. The switch would
+                // otherwise accept a second click and stack a second prompt
+                // behind the first, where it is invisible.
+                .disabled(stayAwake.isBusy)
+
+                Text("Keeps this Mac awake with the lid shut. Changing it asks for an administrator password every time, and QuitGuard turns it back off when it quits. A closed MacBook with no external cooling can run hot during a long workload.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -453,6 +473,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSToolbarDeleg
     private let store: ProtectedAppsStore
     private let dockQuit: DockQuitSettings
     private let launchAtLogin: LaunchAtLogin
+    private let stayAwake: StayAwake
 
     /// Owned here rather than by the view: the toolbar is AppKit and outlives
     /// any particular SwiftUI body.
@@ -461,14 +482,21 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSToolbarDeleg
     init(
         store: ProtectedAppsStore,
         dockQuit: DockQuitSettings,
-        launchAtLogin: LaunchAtLogin
+        launchAtLogin: LaunchAtLogin,
+        stayAwake: StayAwake
     ) {
         self.store = store
         self.dockQuit = dockQuit
         self.launchAtLogin = launchAtLogin
+        self.stayAwake = stayAwake
     }
 
     func show() {
+        // Every open, first or repeat: a terminal `sudo pmset`, another app, or
+        // a reboot can have changed this behind us, and the switch is only
+        // honest if it came from a read.
+        stayAwake.refresh()
+
         if let window {
             // Reopening shows whatever SMAppService says now — the user may
             // have changed it in System Settings while this window was closed.
@@ -485,6 +513,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSToolbarDeleg
                 store: store,
                 dockQuit: dockQuit,
                 launchAtLogin: launchAtLogin,
+                stayAwake: stayAwake,
                 tabs: tabs
             )
         )
@@ -599,11 +628,17 @@ struct SettingsView_Previews: PreviewProvider {
     /// that reports and must not be trusted as QuitGuard's own login state.
     private static let previewLaunchAtLogin = LaunchAtLogin()
 
+    /// Reads the machine's real `SleepDisabled`, and cannot do otherwise —
+    /// there is no stored bool to seed. The canvas therefore shows this switch
+    /// in whatever position the development Mac is actually in.
+    private static let previewStayAwake = StayAwake()
+
     static var previews: some View {
         SettingsView(
             store: previewStore,
             dockQuit: dockQuit(enabled: false, suite: "com.raahil.quitguard.preview.dockoff"),
             launchAtLogin: previewLaunchAtLogin,
+            stayAwake: previewStayAwake,
             tabs: SettingsTabSelection()
         )
         .previewDisplayName("Dock quit off")
@@ -612,6 +647,7 @@ struct SettingsView_Previews: PreviewProvider {
             store: previewStore,
             dockQuit: dockQuit(enabled: true, suite: "com.raahil.quitguard.preview.dockon"),
             launchAtLogin: previewLaunchAtLogin,
+            stayAwake: previewStayAwake,
             tabs: SettingsTabSelection()
         )
         .previewDisplayName("Dock quit on")
