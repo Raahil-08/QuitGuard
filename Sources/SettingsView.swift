@@ -170,6 +170,7 @@ struct SettingsView: View {
     @ObservedObject var dockQuit: DockQuitSettings
     @ObservedObject var launchAtLogin: LaunchAtLogin
     @ObservedObject var stayAwake: StayAwake
+    @ObservedObject var keyboardLockSettings: KeyboardLockSettings
     @ObservedObject var tabs: SettingsTabSelection
     @StateObject private var scanner = InstalledAppsScanner()
     @State private var query = ""
@@ -287,6 +288,24 @@ struct SettingsView: View {
                 .disabled(stayAwake.isBusy)
 
                 Text("Keeps this Mac awake with the lid shut. Changing it asks for an administrator password every time, and QuitGuard turns it back off when it quits. A closed MacBook with no external cooling can run hot during a long workload.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                switchRow(
+                    "Keyboard Lock",
+                    isOn: Binding(
+                        get: { keyboardLockSettings.isEnabled },
+                        set: { keyboardLockSettings.setEnabled($0) }
+                    )
+                )
+
+                // The action itself is in the menu bar menu, not here — it is
+                // an action rather than a setting, and should be reachable from
+                // any app without opening this window.
+                Text("Adds Lock Keyboard to the menu bar menu, for cleaning. Every key is ignored while your mouse keeps working, and the keyboard unlocks automatically after 5 minutes no matter what.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -474,6 +493,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSToolbarDeleg
     private let dockQuit: DockQuitSettings
     private let launchAtLogin: LaunchAtLogin
     private let stayAwake: StayAwake
+    private let keyboardLockSettings: KeyboardLockSettings
 
     /// Owned here rather than by the view: the toolbar is AppKit and outlives
     /// any particular SwiftUI body.
@@ -483,12 +503,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSToolbarDeleg
         store: ProtectedAppsStore,
         dockQuit: DockQuitSettings,
         launchAtLogin: LaunchAtLogin,
-        stayAwake: StayAwake
+        stayAwake: StayAwake,
+        keyboardLockSettings: KeyboardLockSettings
     ) {
         self.store = store
         self.dockQuit = dockQuit
         self.launchAtLogin = launchAtLogin
         self.stayAwake = stayAwake
+        self.keyboardLockSettings = keyboardLockSettings
     }
 
     func show() {
@@ -514,6 +536,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSToolbarDeleg
                 dockQuit: dockQuit,
                 launchAtLogin: launchAtLogin,
                 stayAwake: stayAwake,
+                keyboardLockSettings: keyboardLockSettings,
                 tabs: tabs
             )
         )
@@ -633,12 +656,21 @@ struct SettingsView_Previews: PreviewProvider {
     /// in whatever position the development Mac is actually in.
     private static let previewStayAwake = StayAwake()
 
+    /// Own suite, same reason as the Dock toggle: shared keys make previews
+    /// fight. On in the second preview so both switch positions are visible.
+    private static func keyboardLock(enabled: Bool, suite: String) -> KeyboardLockSettings {
+        let settings = KeyboardLockSettings(defaults: UserDefaults(suiteName: suite) ?? .standard)
+        settings.setEnabled(enabled)
+        return settings
+    }
+
     static var previews: some View {
         SettingsView(
             store: previewStore,
             dockQuit: dockQuit(enabled: false, suite: "com.raahil.quitguard.preview.dockoff"),
             launchAtLogin: previewLaunchAtLogin,
             stayAwake: previewStayAwake,
+            keyboardLockSettings: keyboardLock(enabled: false, suite: "com.raahil.quitguard.preview.lockoff"),
             tabs: SettingsTabSelection()
         )
         .previewDisplayName("Dock quit off")
@@ -648,6 +680,7 @@ struct SettingsView_Previews: PreviewProvider {
             dockQuit: dockQuit(enabled: true, suite: "com.raahil.quitguard.preview.dockon"),
             launchAtLogin: previewLaunchAtLogin,
             stayAwake: previewStayAwake,
+            keyboardLockSettings: keyboardLock(enabled: true, suite: "com.raahil.quitguard.preview.lockon"),
             tabs: SettingsTabSelection()
         )
         .previewDisplayName("Dock quit on")

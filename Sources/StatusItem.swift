@@ -67,6 +67,8 @@ final class StatusItemController: NSObject {
     private let dockQuit: DockQuitSettings
     private let launchAtLogin: LaunchAtLogin
     private let stayAwake: StayAwake
+    private let keyboardLock: KeyboardLock
+    private let keyboardLockSettings: KeyboardLockSettings
     private let menu = NSMenu()
     private let openSettings: () -> Void
 
@@ -79,6 +81,8 @@ final class StatusItemController: NSObject {
         dockQuit: DockQuitSettings,
         launchAtLogin: LaunchAtLogin,
         stayAwake: StayAwake,
+        keyboardLock: KeyboardLock,
+        keyboardLockSettings: KeyboardLockSettings,
         openSettings: @escaping () -> Void
     ) {
         self.permissions = permissions
@@ -86,6 +90,8 @@ final class StatusItemController: NSObject {
         self.dockQuit = dockQuit
         self.launchAtLogin = launchAtLogin
         self.stayAwake = stayAwake
+        self.keyboardLock = keyboardLock
+        self.keyboardLockSettings = keyboardLockSettings
         self.openSettings = openSettings
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
@@ -196,6 +202,21 @@ final class StatusItemController: NSObject {
 
         menu.addItem(.separator())
 
+        // An action, so it lives here rather than in Settings: reachable with
+        // the mouse from any app in two clicks, without opening a window. Shown
+        // while engaged even if the feature was switched off meanwhile, so the
+        // menu is always a way back out.
+        if keyboardLockSettings.isEnabled || keyboardLock.isEngaged {
+            let lockItem = NSMenuItem(
+                title: keyboardLock.isEngaged ? "Unlock Keyboard" : "Lock Keyboard",
+                action: #selector(toggleKeyboardLock),
+                keyEquivalent: ""
+            )
+            lockItem.target = self
+            menu.addItem(lockItem)
+            menu.addItem(.separator())
+        }
+
         let settings = NSMenuItem(
             title: "Settings…",
             action: #selector(showSettings),
@@ -236,6 +257,14 @@ final class StatusItemController: NSObject {
         launchAtLogin.toggle()
     }
 
+    @objc private func toggleKeyboardLock() {
+        if keyboardLock.isEngaged {
+            keyboardLock.unlock(reason: .menu)
+        } else {
+            keyboardLock.engage()
+        }
+    }
+
     @objc private func grantAccess() {
         // Prompt first; if the user already dismissed the system dialog once it
         // will not reappear, so fall back to opening the settings pane directly.
@@ -259,6 +288,7 @@ extension StatusItemController: NSMenuDelegate {
         // icon corrects itself a moment later. A synchronous `pmset -g` here
         // would hitch the menu by ~80ms every time it opens.
         stayAwake.refresh()
+        keyboardLockSettings.reload()
         populate(menu)
     }
 }

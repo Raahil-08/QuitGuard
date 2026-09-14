@@ -32,6 +32,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let protectedApps = ProtectedAppsStore()
     private let launchAtLogin = LaunchAtLogin()
     private let stayAwake = StayAwake()
+    private let keyboardLockSettings = KeyboardLockSettings()
+    private let keyboardLock = KeyboardLock()
+    private lazy var keyboardLockPanel = KeyboardLockPanelController(lock: keyboardLock)
     private let dockBounds = DockBoundsTracker()
     private let dockQuit = DockQuitSettings()
     private let dockTiles = DockTileResolver()
@@ -48,7 +51,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store: protectedApps,
         dockQuit: dockQuit,
         launchAtLogin: launchAtLogin,
-        stayAwake: stayAwake
+        stayAwake: stayAwake,
+        keyboardLockSettings: keyboardLockSettings
     )
     private lazy var permissionResetWindow = PermissionResetWindowController(
         permissions: permissions,
@@ -66,6 +70,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             dockQuit: dockQuit,
             launchAtLogin: launchAtLogin,
             stayAwake: stayAwake,
+            keyboardLock: keyboardLock,
+            keyboardLockSettings: keyboardLockSettings,
             openSettings: { [weak self] in
                 self?.settingsWindow.show()
             }
@@ -122,6 +128,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Pay the panel's first-layout cost now, not on the Cmd+Q path.
         confirmationPanel.prepare()
+        keyboardLockPanel.prepare()
+
+        // Switching the feature off ends a lock in progress. The emitted value
+        // is used, not the property — `@Published` fires from willSet.
+        keyboardLockSettings.$isEnabled
+            .removeDuplicates()
+            .sink { [weak self] enabled in
+                MainActor.assumeIsolated {
+                    guard let self, !enabled, self.keyboardLock.isEngaged else { return }
+                    self.keyboardLock.unlock(reason: .settingDisabled)
+                }
+            }
+            .store(in: &cancellables)
 
         presentLaunchStateIfNeeded()
         startHealthMonitoring()
@@ -134,6 +153,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `.terminateLater` is only taken when there is something to undo, so an
     /// ordinary quit is unchanged and never prompts.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // First, before anything that might need typing: the sleep revert
+        // below can put up a password prompt, and a locked keyboard could not
+        // answer it. Quitting destroys the tap anyway; this just does it early.
+        keyboardLock.unlock(reason: .quit)
+
         guard stayAwake.needsRevertOnQuit else { return .terminateNow }
 
         stayAwake.revertOnQuit { reverted in

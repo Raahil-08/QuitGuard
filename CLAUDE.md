@@ -130,6 +130,52 @@ clamshell sleep ignores them, which is why this setting exists at all.
   disabled: it is the only thing that surfaces a leftover without opening
   Settings.
 
+## Keyboard Lock
+
+Swallows keyboard input for cleaning; the mouse is never locked. Off unless the
+user enables it; engaged from the status menu.
+
+- **A separate tap, created on lock and destroyed on unlock.** Never widen the
+  `QuitInterceptor` tap. A tap's mask is fixed at `tapCreate` — there is no API
+  to change it — so "restore the mask on unlock" is only achievable by never
+  touching the original. Verified with `CGGetEventTapList`: the process's tap
+  list after unlock is identical to before the lock.
+- The lock mask is exactly `keyDown | keyUp | flagsChanged`. Mouse events are
+  not in it.
+- **Release-only modifier passthrough.** Swallowing a modifier *release* leaves
+  `combinedSessionState` and `NSEvent.modifierFlags` reporting it held until the
+  next event of any kind (measured). So a `flagsChanged` that only removes
+  modifiers the session already believes are down is passed; presses are
+  swallowed. The seed is `combinedSessionState` at engage time.
+- **Cmd+Opt+Esc passes**, and Cmd+Opt+Shift+Esc. Only the Escape event is
+  passed, plus its paired key-up; the modifier presses are still swallowed.
+- **The failsafe runs on its own dispatch queue**, never the main run loop or
+  the tap thread's run loop. It releases via `LockTapContext.release`, which
+  needs neither thread and never waits on the callback's lock. Verified with
+  the tap thread wedged forever in its callback *and* main wedged: it fired on
+  time and invalidated the port. Wall-clock (`wallDeadline`), so sleep does not
+  stretch it. It retains itself until it fires or is cancelled.
+- The failsafe is armed **before** `tapCreate`, so no instant exists where keys
+  are swallowed without a deadline running.
+- Never re-arm the lock tap from the poll. Only the callback re-arms, because a
+  successful re-arm there proves the tap thread is alive; re-arming a wedged tap
+  stalls every keystroke on the machine until it times out again. A tap disabled
+  for 3 seconds ends the lock with reason `degraded`.
+- **"Not locked" is one state** covering both a disabled tap and secure input,
+  with one piece of copy. Keys are reaching apps either way; the distinction is
+  not actionable.
+- **Secure input:** `IsSecureEventInputEnabled()` OR the `IOConsoleUsers`
+  registry key, read in-process (0.02ms; spawning `ioreg` is 81ms). Never name
+  the holding app — `kCGSSessionSecureInputPID` named the frontmost app, never
+  the real holder, in every run.
+- Unlock first in `applicationShouldTerminate`: the sleep revert may put up a
+  password prompt that a locked keyboard could not answer.
+- Testing: launch secure-input helpers with `open -n`, not
+  `NSWorkspace.openApplication`, which reported success without the helper ever
+  running. And never post a synthetic mouse event in the same instant as a
+  synthetic modifier release — it is stamped with the pre-release flags and puts
+  the modifier back into the session, with no lock involved at all.
+
 ## Platform
 
 - Target macOS 13.
@@ -156,6 +202,9 @@ generated and gitignored. Never hand-edit the `.xcodeproj`.
     DockTileResolver.swift    AX hit-test -> running app, main thread only
     DockQuitSettings.swift    the Cmd + right-click toggle, default off
     StayAwake.swift           pmset disablesleep, read back from the system
+    KeyboardLock.swift        lock tap, pure policy, failsafe, secure input check
+    KeyboardLockPanel.swift   unlock panel; window config copied from ConfirmationPanel
+    KeyboardLockSettings.swift the Keyboard Lock toggle, default off
 
 ## Threading
 
