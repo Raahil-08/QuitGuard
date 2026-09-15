@@ -14,6 +14,76 @@ enum LockTapPolicy {
     static let mask: CGEventMask = (1 as CGEventMask) << CGEventType.keyDown.rawValue
         | (1 as CGEventMask) << CGEventType.keyUp.rawValue
         | (1 as CGEventMask) << CGEventType.flagsChanged.rawValue
+        | (1 as CGEventMask) << systemDefinedType
+
+    // MARK: Media keys
+
+    /// `NX_SYSDEFINED` — `NSEvent.EventType.systemDefined`. Not a named
+    /// `CGEventType` case. It carries the function row's media keys (volume,
+    /// brightness, play/pause, keyboard illumination), **and** auxiliary mouse
+    /// button changes, power, sleep and other system events. So it is let into
+    /// the mask, then filtered hard by subtype.
+    static let systemDefinedType: UInt32 = 14
+
+    /// `NX_SUBTYPE_AUX_CONTROL_BUTTONS`: the media keys. Aux mouse buttons are
+    /// subtype 7 and are never swallowed.
+    static let mediaKeySubtype: Int64 = 8
+
+    /// A `CGEvent` has no documented field for an `NX_SYSDEFINED` subtype or
+    /// data1, and `NSEvent(cgEvent:)` is AppKit, which the callback must never
+    /// touch. These raw indices were found by building system-defined events
+    /// with distinct subtype/data values and diffing every integer field:
+    /// subtype appears in both 83 and 99, data1 in 149. Field 7, the documented
+    /// *mouse* subtype, is not used for these events.
+    ///
+    /// Both subtype fields must agree. If a future macOS moves them, the check
+    /// fails and the event passes — media keys would leak again, but the mouse
+    /// could never be caught by a misread.
+    static let subtypeFieldA = CGEventField(rawValue: 83)!
+    static let subtypeFieldB = CGEventField(rawValue: 99)!
+    static let data1Field = CGEventField(rawValue: 149)!
+
+    /// `NX_KEYTYPE_POWER_KEY`: never swallowed.
+    static let powerKeyType: Int64 = 6
+    /// `NX_KEYTYPE_CAPS_LOCK`: informational; the toggle itself is a
+    /// flagsChanged, and a desynchronised Caps Lock light helps nobody.
+    static let capsLockKeyType: Int64 = 4
+
+    private static let keyStateDown: Int64 = 0x0A
+    private static let keyStateUp: Int64 = 0x0B
+
+    /// Fails open: anything that is not unmistakably a media key *press* passes.
+    ///
+    /// data1 layout is `keyType << 16 | keyState << 8 | repeat`. Releases pass
+    /// for the same reason modifier releases do — a key-up does nothing on its
+    /// own, and swallowing one whose press was delivered before the lock
+    /// engaged could leave a repeating volume key the system thinks is held.
+    ///
+    /// **`data1` is lazy, and must stay lazy.** Field 149 is a compound field:
+    /// reading it on a system-defined event whose subtype does not carry one
+    /// *aborts the process* inside SkyLight (`event_carries_compound_data_field`
+    /// assertion) — measured on subtypes 6 and 9. The assertion is keyed on the
+    /// subtype value itself (a forged subtype 8 reads fine, a forged 6 aborts),
+    /// so evaluating data1 only after both subtype fields read 8 is a
+    /// guarantee. Reading it eagerly would crash QuitGuard mid-lock.
+    static func decideSystemDefined(
+        subtypeA: Int64,
+        subtypeB: Int64,
+        data1 readData1: @autoclosure () -> Int64
+    ) -> Decision {
+        guard subtypeA == mediaKeySubtype, subtypeB == mediaKeySubtype else { return .pass }
+        let data1 = readData1()
+        guard data1 >= 0, data1 <= 0x7FFF_FFFF else { return .pass }
+
+        let keyType = (data1 >> 16) & 0xFFFF
+        let keyState = (data1 >> 8) & 0xFF
+        let lowBits = data1 & 0xFF
+        guard lowBits & ~1 == 0 else { return .pass }           // only the repeat bit may be set
+        guard keyState == keyStateDown || keyState == keyStateUp else { return .pass }
+        guard keyState == keyStateDown else { return .pass }
+        guard keyType != powerKeyType, keyType != capsLockKeyType else { return .pass }
+        return .swallow
+    }
 
     static let modifierBits: CGEventFlags = [.maskShift, .maskControl, .maskAlternate, .maskCommand]
     static let escapeKeyCode: Int64 = 53
@@ -185,6 +255,18 @@ final class LockTapContext: @unchecked Sendable {
                 Self.logger.notice("Lock tap disabled by \(why, privacy: .public) — re-armed")
             }
             return Unmanaged.passUnretained(event)
+        }
+
+        // Media keys and everything else NX_SYSDEFINED: stateless, no lock.
+        // The data1 argument is an autoclosure — it is only read once the
+        // subtype is known to carry it. See decideSystemDefined.
+        if type.rawValue == LockTapPolicy.systemDefinedType {
+            let decision = LockTapPolicy.decideSystemDefined(
+                subtypeA: event.getIntegerValueField(LockTapPolicy.subtypeFieldA),
+                subtypeB: event.getIntegerValueField(LockTapPolicy.subtypeFieldB),
+                data1: event.getIntegerValueField(LockTapPolicy.data1Field)
+            )
+            return decision == .pass ? Unmanaged.passUnretained(event) : nil
         }
 
         stateLock.lock()

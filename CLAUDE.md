@@ -140,8 +140,21 @@ user enables it; engaged from the status menu.
   to change it — so "restore the mask on unlock" is only achievable by never
   touching the original. Verified with `CGGetEventTapList`: the process's tap
   list after unlock is identical to before the lock.
-- The lock mask is exactly `keyDown | keyUp | flagsChanged`. Mouse events are
-  not in it.
+- The lock mask is exactly `keyDown | keyUp | flagsChanged | NX_SYSDEFINED (14)`.
+  No mouse event type is in it.
+- **Media keys live in `NX_SYSDEFINED`, which also carries aux mouse buttons
+  (subtype 7), power and sleep events.** Only subtype 8
+  (`NX_SUBTYPE_AUX_CONTROL_BUTTONS`) *presses* are swallowed; releases, power
+  and Caps Lock pass, and every other subtype passes. A `CGEvent` has no
+  documented field for subtype or data1, and `NSEvent(cgEvent:)` is AppKit, so
+  raw fields are read: subtype in **83 and 99** (both must say 8), data1 in
+  **149**. Found by diffing every field; cross-checked against `NSEvent`.
+- **Never read field 149 before the subtype check.** It is a compound field,
+  and reading it on a subtype that does not carry one *aborts the process*
+  (SkyLight assertion `event_carries_compound_data_field`) — subtypes 6 and 9.
+  The assertion is keyed on the subtype value, so gating on subtype 8 is a
+  guarantee. `decideSystemDefined` takes data1 as an autoclosure for this
+  reason; do not make it eager.
 - **Release-only modifier passthrough.** Swallowing a modifier *release* leaves
   `combinedSessionState` and `NSEvent.modifierFlags` reporting it held until the
   next event of any kind (measured). So a `flagsChanged` that only removes
@@ -170,9 +183,16 @@ user enables it; engaged from the status menu.
   the real holder, in every run.
 - Unlock first in `applicationShouldTerminate`: the sleep revert may put up a
   password prompt that a locked keyboard could not answer.
+- Secure-input detection does not latch. It cleared within 100ms of the holder
+  exiting after a normal Disable, SIGKILL, SIGTERM and SIGABRT (none calling
+  Disable), and immediately on Disable with the process still alive. An
+  unbalanced Enable/Enable/Disable stays on while the holder lives — that is
+  the real system state, and the tap really is blind then.
 - Testing: launch secure-input helpers with `open -n`, not
   `NSWorkspace.openApplication`, which reported success without the helper ever
-  running. And never post a synthetic mouse event in the same instant as a
+  running. `NSRunningApplication.terminate()` returns true but cannot quit a
+  helper with no event loop; wait for the process to actually exit (or signal
+  it) before asserting that secure input has cleared. And never post a synthetic mouse event in the same instant as a
   synthetic modifier release — it is stamped with the pre-release flags and puts
   the modifier back into the session, with no lock involved at all.
 
