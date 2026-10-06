@@ -21,6 +21,9 @@ targets:
 
     sources:
       - path: Sources
+        excludes:
+          # Per-feature agent docs live next to the code but are not resources.
+          - "**/AGENTS.md"
 
     entitlements:
       path: Sources/QuitGuard.entitlements
@@ -65,3 +68,32 @@ targets:
           # Release build debuggable — unacceptable for a process that holds
           # Accessibility and can see every keystroke.
           CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+
+  QuitGuardTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "13.0"
+    # Pure logic is compiled straight into the bundle instead of hosting the
+    # real app: hosting would launch QuitGuard itself, with its event taps and
+    # Accessibility prompt, for every test run.
+    sources:
+      - path: Tests/QuitGuardTests
+      - path: Sources/Features/KeyboardLock/KeyboardLock.swift
+      - path: Sources/Features/QuitProtection/QuitProtectionSettings.swift
+      - path: Sources/Features/QuitProtection/ProtectedAppsStore.swift
+      - path: Sources/Core/FeatureCatalog.swift
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Automatic
+        PRODUCT_BUNDLE_IDENTIFIER: com.raahil.quitguard.tests
+
+schemes:
+  QuitGuard:
+    build:
+      targets:
+        QuitGuard: all
+    test:
+      targets:
+        - QuitGuardTests

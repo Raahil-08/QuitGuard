@@ -34,6 +34,7 @@ final class QuitInterceptor {
 
     private let frontmost: FrontmostAppTracker
     private let protectedApps: ProtectedAppsStore
+    private let quitProtection: QuitProtectionSettings
     private let dockBounds: DockBoundsTracker
     private let dockQuit: DockQuitSettings
     private let dockTiles: DockTileResolver
@@ -50,12 +51,14 @@ final class QuitInterceptor {
     init(
         frontmost: FrontmostAppTracker,
         protectedApps: ProtectedAppsStore,
+        quitProtection: QuitProtectionSettings,
         dockBounds: DockBoundsTracker,
         dockQuit: DockQuitSettings,
         dockTiles: DockTileResolver
     ) {
         self.frontmost = frontmost
         self.protectedApps = protectedApps
+        self.quitProtection = quitProtection
         self.dockBounds = dockBounds
         self.dockQuit = dockQuit
         self.dockTiles = dockTiles
@@ -185,6 +188,12 @@ final class QuitInterceptor {
         }
 
         guard type == .keyDown else {
+            return Unmanaged.passUnretained(event)
+        }
+
+        // Feature switched off: nothing on the Cmd+Q path can swallow anything.
+        // One uncontended lock read, same as the Dock chord's guard.
+        guard quitProtection.isEnabled else {
             return Unmanaged.passUnretained(event)
         }
 
