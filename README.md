@@ -1,8 +1,13 @@
 # QuitGuard
 
-A macOS menu bar utility that intercepts <kbd>Cmd</kbd>+<kbd>Q</kbd> for a
-user-selected list of apps and shows a confirmation panel instead of quitting
-immediately. Apps that aren't on the list quit normally.
+A personal macOS menu bar utility made of toggleable features. All are off
+until enabled in Settings:
+
+- **Quit Protection**: intercepts <kbd>Cmd</kbd>+<kbd>Q</kbd> for a chosen list
+  of apps and asks for confirmation. Other apps quit normally.
+- **Dock Quit**: <kbd>Cmd</kbd>+right-click a Dock tile to quit that app.
+- **Stay Awake**: keep the Mac awake with the lid closed (`pmset disablesleep`).
+- **Keyboard Lock**: swallow keyboard input while you clean it; mouse stays live.
 
 Requires macOS 13 or later. No dependencies beyond system frameworks.
 
@@ -14,9 +19,12 @@ Requires [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodeg
 # once per machine — creates the "QuitGuard Local" signing identity
 ./scripts/make-signing-cert.sh
 
-xcodegen generate
-xcodebuild -scheme QuitGuard build
+make build      # generate + Debug compile check
+make install    # Release build into /Applications
 ```
+
+Sources live in `Sources/{App,Core,Settings,Features/<Name>}`. See `AGENTS.md`
+for the layout and `docs/` for constraints and how to add a feature.
 
 `project.yml` is the source of truth; the `.xcodeproj` is generated and
 gitignored.
@@ -25,7 +33,7 @@ gitignored.
 
 QuitGuard needs Accessibility permission to observe and consume key events. The
 grant is pinned to the app's bundle identifier *and* its signing certificate, so
-it survives rebuilds as long as neither changes. See `CLAUDE.md` for the
+it survives rebuilds as long as neither changes. See `docs/constraints/signing.md` for the
 constraints that keep it that way.
 
 ## Debugging
@@ -42,8 +50,7 @@ and the bare command fails with `too many arguments`, which looks exactly like
 
 ## Status
 
-All stages complete: menu bar app, event tap, confirmation panel, settings
-picker, login item, and tap health monitoring.
+Version 0.1.0, local use only (self-signed). See `CHANGELOG.md` and `docs/ROADMAP.md`.
 
 
 ### Seeding the protected list for testing

@@ -30,6 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let permissions = PermissionGate()
     private let frontmost = FrontmostAppTracker()
     private let protectedApps = ProtectedAppsStore()
+    private let quitProtection = QuitProtectionSettings()
+    private let wishlist = FeatureWishlist()
     private let launchAtLogin = LaunchAtLogin()
     private let stayAwake = StayAwake()
     private let keyboardLockSettings = KeyboardLockSettings()
@@ -41,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var interceptor = QuitInterceptor(
         frontmost: frontmost,
         protectedApps: protectedApps,
+        quitProtection: quitProtection,
         dockBounds: dockBounds,
         dockQuit: dockQuit,
         dockTiles: dockTiles
@@ -49,6 +52,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let confirmationPanel = ConfirmationPanelController()
     private lazy var settingsWindow = SettingsWindowController(
         store: protectedApps,
+        quitProtection: quitProtection,
+        wishlist: wishlist,
         dockQuit: dockQuit,
         launchAtLogin: launchAtLogin,
         stayAwake: stayAwake,
@@ -67,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = StatusItemController(
             permissions: permissions,
             protectedApps: protectedApps,
+            quitProtection: quitProtection,
             dockQuit: dockQuit,
             launchAtLogin: launchAtLogin,
             stayAwake: stayAwake,
@@ -122,6 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // main-actor properties.
             MainActor.assumeIsolated {
                 self?.protectedApps.reload()
+                self?.quitProtection.reload()
                 self?.dockQuit.reload()
             }
         }

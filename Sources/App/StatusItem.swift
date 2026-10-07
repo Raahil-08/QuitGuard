@@ -64,6 +64,7 @@ final class StatusItemController: NSObject {
     private let statusItem: NSStatusItem
     private let permissions: PermissionGate
     private let protectedApps: ProtectedAppsStore
+    private let quitProtection: QuitProtectionSettings
     private let dockQuit: DockQuitSettings
     private let launchAtLogin: LaunchAtLogin
     private let stayAwake: StayAwake
@@ -78,6 +79,7 @@ final class StatusItemController: NSObject {
     init(
         permissions: PermissionGate,
         protectedApps: ProtectedAppsStore,
+        quitProtection: QuitProtectionSettings,
         dockQuit: DockQuitSettings,
         launchAtLogin: LaunchAtLogin,
         stayAwake: StayAwake,
@@ -87,6 +89,7 @@ final class StatusItemController: NSObject {
     ) {
         self.permissions = permissions
         self.protectedApps = protectedApps
+        self.quitProtection = quitProtection
         self.dockQuit = dockQuit
         self.launchAtLogin = launchAtLogin
         self.stayAwake = stayAwake
@@ -191,14 +194,18 @@ final class StatusItemController: NSObject {
             menu.addItem(awake)
         }
 
-        let count = protectedApps.all.count
-        let protectedItem = NSMenuItem(
-            title: count == 1 ? "1 app protected" : "\(count) apps protected",
-            action: nil,
-            keyEquivalent: ""
-        )
-        protectedItem.isEnabled = false
-        menu.addItem(protectedItem)
+        // Only a feature that is on gets a row: with Quit Protection off there
+        // is nothing being protected, whatever the ticked list says.
+        if quitProtection.isEnabled {
+            let count = protectedApps.all.count
+            let protectedItem = NSMenuItem(
+                title: count == 1 ? "1 app protected" : "\(count) apps protected",
+                action: nil,
+                keyEquivalent: ""
+            )
+            protectedItem.isEnabled = false
+            menu.addItem(protectedItem)
+        }
 
         menu.addItem(.separator())
 
@@ -282,6 +289,7 @@ extension StatusItemController: NSMenuDelegate {
         permissions.refresh()
         // Picks up a `defaults write` made from a terminal without a relaunch.
         protectedApps.reload()
+        quitProtection.reload()
         dockQuit.reload()
         launchAtLogin.refresh()
         // Asynchronous, so this menu renders with the last known value and the

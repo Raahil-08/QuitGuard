@@ -119,7 +119,7 @@ final class InstalledAppsScanner: ObservableObject {
 
 // MARK: - Tabs
 
-/// The window's two panes.
+/// The window's three panes.
 ///
 /// Rendered by an `NSToolbar` in `.preference` style rather than by SwiftUI's
 /// `TabView`. macOS backs `TabView` with an `NSTabView`, whose tab items are
@@ -127,12 +127,14 @@ final class InstalledAppsScanner: ObservableObject {
 /// discarded, and no `tabViewStyle` or `labelStyle` changes that. The
 /// icon-above-label pill is a toolbar, not a tab bar.
 enum SettingsTab: String, CaseIterable {
-    case settings
+    case features
+    case apps
     case about
 
     var title: String {
         switch self {
-        case .settings: return "Settings"
+        case .features: return "Features"
+        case .apps: return "Protected Apps"
         case .about: return "About"
         }
     }
@@ -141,7 +143,8 @@ enum SettingsTab: String, CaseIterable {
     /// toolbar size.
     var systemImage: String {
         switch self {
-        case .settings: return "gearshape.fill"
+        case .features: return "switch.2"
+        case .apps: return "checklist"
         case .about: return "info.circle"
         }
     }
@@ -160,13 +163,15 @@ enum SettingsTab: String, CaseIterable {
 /// Shared between the AppKit toolbar and the SwiftUI content, which is what
 /// lets a toolbar click swap the pane.
 final class SettingsTabSelection: ObservableObject {
-    @Published var current: SettingsTab = .settings
+    @Published var current: SettingsTab = .features
 }
 
 // MARK: - View
 
 struct SettingsView: View {
     @ObservedObject var store: ProtectedAppsStore
+    @ObservedObject var quitProtection: QuitProtectionSettings
+    @ObservedObject var wishlist: FeatureWishlist
     @ObservedObject var dockQuit: DockQuitSettings
     @ObservedObject var launchAtLogin: LaunchAtLogin
     @ObservedObject var stayAwake: StayAwake
@@ -195,7 +200,16 @@ struct SettingsView: View {
     var body: some View {
         Group {
             switch tabs.current {
-            case .settings: settingsTab
+            case .features:
+                FeaturesPane(
+                    quitProtection: quitProtection,
+                    dockQuit: dockQuit,
+                    stayAwake: stayAwake,
+                    keyboardLockSettings: keyboardLockSettings,
+                    launchAtLogin: launchAtLogin,
+                    wishlist: wishlist
+                )
+            case .apps: appsTab
             case .about: AboutView()
             }
         }
@@ -209,19 +223,24 @@ struct SettingsView: View {
     /// Deliberately not `Form`/`Section`. Two things break there: the grouped
     /// form style promotes a TextField's placeholder to a wrapped label in the
     /// leading column, wrecking the filter row, and the app List expands to its
-    /// full content height inside the Form's own scroll view — which pushes the
-    /// Behaviour section below 136 rows of apps. A plain VStack keeps the List
-    /// as the only scrolling region, which is what this window wants.
-    private var settingsTab: some View {
+    /// full content height inside the Form's own scroll view. A plain VStack
+    /// keeps the List as the only scrolling region, which is what this pane
+    /// wants. The switches live on the Features tab instead.
+    private var appsTab: some View {
         VStack(alignment: .leading, spacing: 0) {
             sectionLabel("Protected apps")
+            if !quitProtection.isEnabled {
+                // The list still saves while the feature is off, but nothing is
+                // intercepted, so say so rather than let ticked apps look live.
+                Text("Quit Protection is off, so these apps quit normally. Turn it on in the Features tab.")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 6)
+            }
             header
             content
-            Divider()
-            sectionLabel("Behaviour")
-            behaviour
-                .padding(.horizontal, 16)
-                .padding(.bottom, 16)
         }
     }
 
@@ -232,102 +251,6 @@ struct SettingsView: View {
             .padding(.horizontal, 16)
             .padding(.top, 14)
             .padding(.bottom, 6)
-    }
-
-    /// Switches, not checkboxes: these are settings that take effect on their
-    /// own. The app rows above stay checkboxes because they are a selection.
-    private var behaviour: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                switchRow(
-                    "Quit apps with Cmd + right-click in the Dock",
-                    isOn: Binding(
-                        get: { dockQuit.isEnabled },
-                        set: { dockQuit.setEnabled($0) }
-                    )
-                )
-
-                // Worth stating plainly. Everything else in this window is
-                // scoped to the ticked apps, so the natural assumption is that
-                // this is too.
-                Text("Applies to any app in the Dock, not just the ones ticked above. The app quits immediately — no confirmation. Finder is never quit this way.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            // Reads and writes the same LaunchAtLogin instance the status menu
-            // holds, so toggling either moves the other with no cached copy in
-            // between. See the note on LaunchAtLogin itself.
-            switchRow(
-                "Launch QuitGuard at login",
-                isOn: Binding(
-                    get: { launchAtLogin.isEnabled },
-                    set: { launchAtLogin.setEnabled($0) }
-                )
-            )
-
-            if launchAtLogin.requiresApproval {
-                Text("Waiting for approval in System Settings › General › Login Items.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                switchRow(
-                    "Claude maxxing",
-                    isOn: Binding(
-                        get: { stayAwake.isEnabled },
-                        set: { stayAwake.setEnabled($0) }
-                    )
-                )
-                // Disabled while the password prompt is up. The switch would
-                // otherwise accept a second click and stack a second prompt
-                // behind the first, where it is invisible.
-                .disabled(stayAwake.isBusy)
-
-                Text("Keeps this Mac awake with the lid shut. Changing it asks for an administrator password every time, and QuitGuard turns it back off when it quits. A closed MacBook with no external cooling can run hot during a long workload.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                switchRow(
-                    "Keyboard Lock",
-                    isOn: Binding(
-                        get: { keyboardLockSettings.isEnabled },
-                        set: { keyboardLockSettings.setEnabled($0) }
-                    )
-                )
-
-                // The action itself is in the menu bar menu, not here — it is
-                // an action rather than a setting, and should be reachable from
-                // any app without opening this window.
-                Text("Adds Lock Keyboard to the menu bar menu, for cleaning. Every key is ignored while your mouse keeps working, and the keyboard unlocks automatically after 5 minutes no matter what.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// Label left, switch hard right — so switches line up with each other
-    /// instead of each starting wherever its own label happens to end.
-    ///
-    /// The Toggle keeps its title and hides it rather than being given an empty
-    /// one: `labelsHidden()` suppresses the drawing, but the string is still
-    /// there for VoiceOver.
-    private func switchRow(_ title: String, isOn: Binding<Bool>) -> some View {
-        HStack(spacing: 12) {
-            Text(title)
-            Spacer(minLength: 8)
-            Toggle(title, isOn: isOn)
-                .toggleStyle(.switch)
-                .labelsHidden()
-        }
     }
 
     /// The section label says "Protected apps"; this says what being in it
@@ -490,6 +413,8 @@ struct AboutView: View {
 final class SettingsWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private var window: NSWindow?
     private let store: ProtectedAppsStore
+    private let quitProtection: QuitProtectionSettings
+    private let wishlist: FeatureWishlist
     private let dockQuit: DockQuitSettings
     private let launchAtLogin: LaunchAtLogin
     private let stayAwake: StayAwake
@@ -501,12 +426,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSToolbarDeleg
 
     init(
         store: ProtectedAppsStore,
+        quitProtection: QuitProtectionSettings,
+        wishlist: FeatureWishlist,
         dockQuit: DockQuitSettings,
         launchAtLogin: LaunchAtLogin,
         stayAwake: StayAwake,
         keyboardLockSettings: KeyboardLockSettings
     ) {
         self.store = store
+        self.quitProtection = quitProtection
+        self.wishlist = wishlist
         self.dockQuit = dockQuit
         self.launchAtLogin = launchAtLogin
         self.stayAwake = stayAwake
@@ -518,6 +447,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSToolbarDeleg
         // a reboot can have changed this behind us, and the switch is only
         // honest if it came from a read.
         stayAwake.refresh()
+        quitProtection.reload()
 
         if let window {
             // Reopening shows whatever SMAppService says now — the user may
@@ -533,6 +463,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSToolbarDeleg
         let hosting = NSHostingController(
             rootView: SettingsView(
                 store: store,
+                quitProtection: quitProtection,
+                wishlist: wishlist,
                 dockQuit: dockQuit,
                 launchAtLogin: launchAtLogin,
                 stayAwake: stayAwake,
@@ -646,6 +578,12 @@ struct SettingsView_Previews: PreviewProvider {
         return settings
     }
 
+    private static func quitProtection(suite: String, enabled: Bool = false) -> QuitProtectionSettings {
+        let settings = QuitProtectionSettings(defaults: UserDefaults(suiteName: suite) ?? .standard)
+        settings.setEnabled(enabled)
+        return settings
+    }
+
     /// The real thing. Previewing reads SMAppService for this app bundle, which
     /// under the canvas is Xcode's preview host — so the switch shows whatever
     /// that reports and must not be trusted as QuitGuard's own login state.
@@ -667,6 +605,8 @@ struct SettingsView_Previews: PreviewProvider {
     static var previews: some View {
         SettingsView(
             store: previewStore,
+            quitProtection: quitProtection(suite: "com.raahil.quitguard.preview.qpoff"),
+            wishlist: FeatureWishlist(defaults: UserDefaults(suiteName: "com.raahil.quitguard.preview.wish") ?? .standard),
             dockQuit: dockQuit(enabled: false, suite: "com.raahil.quitguard.preview.dockoff"),
             launchAtLogin: previewLaunchAtLogin,
             stayAwake: previewStayAwake,
@@ -677,6 +617,8 @@ struct SettingsView_Previews: PreviewProvider {
 
         SettingsView(
             store: previewStore,
+            quitProtection: quitProtection(suite: "com.raahil.quitguard.preview.qpon", enabled: true),
+            wishlist: FeatureWishlist(defaults: UserDefaults(suiteName: "com.raahil.quitguard.preview.wish") ?? .standard),
             dockQuit: dockQuit(enabled: true, suite: "com.raahil.quitguard.preview.dockon"),
             launchAtLogin: previewLaunchAtLogin,
             stayAwake: previewStayAwake,
